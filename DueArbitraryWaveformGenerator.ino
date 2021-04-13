@@ -1054,7 +1054,7 @@ void loop()
           {
             Serial.println("\n   Wave Shape 4 - Square Root function wave variables (Up & Down).");
             Serial.println(  "          Upper portion: y = A(x + B)^0.5 + C");
-            Serial.println(  "          Lower portion: y = -(A(x + B)^0.5) + C\n");
+            Serial.println(  "          Lower portion: y = -(A(x + B)^0.5 + C)\n");
             Serial.println(  "   x4a = A (default = 50.0)");
             Serial.println(  "   x4b = B (default = 0.0)");
             Serial.println(  "   x4c = C Vertical Shift (default = 0.0)");
