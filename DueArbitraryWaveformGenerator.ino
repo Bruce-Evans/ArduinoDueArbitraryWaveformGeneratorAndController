@@ -4,14 +4,14 @@
 // To use:
 // 1) Upload this sketch to Arduino Due.
 // 2) If additional board protection desired then connect pins 3 & 7 first to a resistor (approx 47 to 100 ohms) then to circuit.
-// 3) The square wave output is taken from pin 7. The syncronised square wave is taken from pin 3.
+// 3) The synchronised square wave output is always taken from pin 3. The UNsyncronised square wave output is taken from pin 7, except below 163Hz when it's taken from pin 3 to maximize wave specifications.
 // 4) The analogue wave output is at DAC0 (i.e. DAC2 on Arduino Due board).
 //
 // See:  https://create.arduino.cc/projecthub/BruceEvans/arduino-due-arbitrary-waveform-generator-a9d180?f=1 and https://github.com/Bruce-Evans/ArduinoDueArbitraryWaveformGeneratorAndController/releases
 // For more background see: https://makezine.com/projects/make-35/advanced-arduino-sound-synthesis/
 //
 // User Defined Equation code modifications developed by Michael Szoke 2021 which builds upon and increases functionality.
-// Type "X" in Serial Monitor to access Extra commands for each wave shape.
+// Type "x" in Serial Monitor to access Extra commands for each wave shape.
 // See Github fork:  https://github.com/mszoke01/ArduinoDueArbitraryWaveformGeneratorAndController
 //
 //
@@ -70,7 +70,7 @@
 // Type:   r   to toggle frequency/period Range of the pots: x 1, x10, x100, x1000 & x 10000 (synchronized & unsynchronized ranges are adjustable independently by using the ' ' or 'b' command shown above)
 // Type:   R   to toggle pulse width Range of the pot. (does not affect duty-cycle percent): x 1, x10, x100, x1000 & x 10000."); (synchronized & unsynchronized ranges are adjustable independently by using the ' ' or 'b' command shown above)
 // Type:   ?   to display the help screen. (shortened version of the above)
-// Type:   X   to access Extra commands for each wave type. Close and re-open Serial Monitor to reset all wave variables to default values.
+// Type:   x   to access Extra commands for each wave type. Close and re-open Serial Monitor to reset all wave variables to default values.
 
 /********************************************************/
 // Do not adjust if working okay: Type number before delimiter (if altered, will return to default unless variables: MinMaxDuty, Delay1, 2 & 3 are altered accordingly)
@@ -102,6 +102,7 @@ unsigned long SwitchPressedTime;    // for debouncing pot switches
 unsigned long LEDupdateTime;        // update pot function LED indicators every 300 mSecs (not every cycle of the loop)
 double UserInput       = 0;         // input read from serial connection
 char  InputChar;                    // last input character read from serial connection (delimiter)
+char  ExtraChars[4] = "zzz";        // array of input characters read from serial connection if 'x' is detected (z is an unrecognized character)
 int   numDecimalPlaces = -1;        // counts number of input digits read from serial connection after '.' detected. Equals -1 until '.' detected
 unsigned long TouchedTime = 0; // detects when enter pressed twice within 500 mSecs for triggering Status message
 byte  SweepStep;                    // 0 = Sweep off, 1 =  Set SweepMinFreq, 2 = Set SweepMaxFreq, 3 = Set SweepRiseTime, 4 = Set SweepFallTime, 5 = Run
@@ -329,10 +330,10 @@ void CreateWaveFull() // WaveFull: (actually half a wave in full resolution) for
       int16_t nextPointValue;
       int16_t lastPointValue;
       float level = ArbitraryWave[point];
-      if (ArbitraryWaveStep[point + 1] > -1) nextPointValue = ArbitraryWaveStep[point + 1]; // if next point is a wave-step, read level from 'step' file
-      else nextPointValue = ArbitraryWave[point + 1];                                      // otherwise it's a normal point, so read level from usual file
-      if (ArbitraryWaveStep[point] > -1 && point != 0) lastPointValue = ArbitraryWaveStep[point];      // if this point is a wave-step & not 1st point, read level from 'step' file
-      else lastPointValue = ArbitraryWave[max(0, point - 1)];                            // otherwise read level from previous point's usual file
+      if (ArbitraryWaveStep[point + 1] > -1) nextPointValue = ArbitraryWaveStep[point + 1]; // if next point is a wave-step, read level from 'step' variable
+      else nextPointValue = ArbitraryWave[point + 1];                                      // otherwise it's a normal point, so read level from usual variable
+      if (ArbitraryWaveStep[point] > -1 && point != 0) lastPointValue = ArbitraryWaveStep[point];      // if this point is a wave-step & not 1st point, read level from 'step' variable
+      else lastPointValue = ArbitraryWave[max(0, point - 1)];                            // otherwise read level from previous point's usual variable
       byte waveStepPeak = 0; // if sharp wave peak detected (if direction changed sharply) at start of wave step value will depend on freq
       if (ArbitraryWaveStep[point] > -1) // if this point is a wave-step,
       {
@@ -381,26 +382,17 @@ void CreateWaveFull() // WaveFull: (actually half a wave in full resolution) for
   }
   else
   {
-
     for (int Index = 0; Index < NWAVEFULL; Index++) // create the individual samples for the wave - half cycle, 4096 steps, 12 bit range: 4095 - 0
     {
       if (WaveShape == 0) // Sine wave
       {
         // y = A*sin(B(x + C)) + D
-        WaveFull[Index] = (uint16_t) (((WS0d + WS0a * sin((((2.0 * PI) / (WS0b * NWAVEFULL)) / 2) * (Index + (WS0c * NWAVEFULL)))) * 4095.0) / 2);// (((1 + sin((((2.0 * PI) / NWAVEFULL) / 2) * (Index + (NWAVEFULL / 2)))) * 4095.0) / 2); // Sine wave
-
-        //keep wave clamped between maximum and minium values
-        if (WaveFull[Index] > 4095) WaveFull[Index] = 4095;
-        if (WaveFull[Index] < 0) WaveFull[Index] = 0;
+        WaveFull[Index] = (uint16_t) (((WS0d + WS0a * sin((((2.0 * PI) / (WS0b * NWAVEFULL)) / 2) * (Index + (WS0c * NWAVEFULL)))) * 4095.0) / 2);
       }
       else if (WaveShape == 1)  // Triangle wave
       {
         // y = A-Bx
         WaveFull[Index] = (uint16_t) ((WS1a * NWAVEFULL - 1) - (WS1b * Index)); // NWAVEFULL - 1 - Index;
-
-        //keep wave clamped between maximum and minium values
-      if (WaveTable[Index] > 4095) WaveTable[Index] = 4095;
-      if (WaveTable[Index] < 0) WaveTable[Index] = 0;
       }
       else if (WaveShape == 3)  // Stepped Square "wave" (maximum 5 steps)
       {
@@ -411,87 +403,37 @@ void CreateWaveFull() // WaveFull: (actually half a wave in full resolution) for
         //y = A4 if Index > B3 && Index <= B4;
         //y = A5 else
         
-        if((WS3b0 != 0.0) && (Index >= 0) && (Index < (WS3b0 * (NWAVEFULL - 1))))
-        {
-          WaveFull[Index] = (uint16_t) (WS3a0 * (NWAVEFULL - 1));
-        }
-        else if ((WS3b1 != 0.0) && (Index >= (WS3b0 * (NWAVEFULL - 1))) && (Index < (WS3b1 * (NWAVEFULL - 1))))
-        {
-          WaveFull[Index] = (uint16_t) (WS3a1 * (NWAVEFULL - 1));
-        }
-        else if ((WS3b2 != 0.0) && (Index >= (WS3b1 * (NWAVEFULL - 1))) && (Index < (WS3b2 * (NWAVEFULL - 1))))
-        {
-          WaveFull[Index] = (uint16_t) (WS3a2 * (NWAVEFULL - 1));
-        }
-        else if ((WS3b3 != 0.0) && (Index >= (WS3b2 * (NWAVEFULL - 1))) && (Index < (WS3b3 * (NWAVEFULL - 1))))
-        {
-          WaveFull[Index] = (uint16_t) (WS3a3 * (NWAVEFULL - 1));
-        }
-        else
-        {
-          WaveFull[Index] = (uint16_t) (WS3a4 * (NWAVEFULL - 1));
-        }
-
-        //keep wave clamped between maximum and minium values
-       if (WaveTable[Index] > 4095) WaveTable[Index] = 4095;
-       if (WaveTable[Index] < 0) WaveTable[Index] = 0;
+        if((WS3b0 != 0.0) && (Index >= 0) && (Index < (WS3b0 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a0 * (NWAVEFULL - 1));
+        else if ((WS3b1 != 0.0) && (Index >= (WS3b0 * (NWAVEFULL - 1))) && (Index < (WS3b1 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a1 * (NWAVEFULL - 1));
+        else if ((WS3b2 != 0.0) && (Index >= (WS3b1 * (NWAVEFULL - 1))) && (Index < (WS3b2 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a2 * (NWAVEFULL - 1));
+        else if ((WS3b3 != 0.0) && (Index >= (WS3b2 * (NWAVEFULL - 1))) && (Index < (WS3b3 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a3 * (NWAVEFULL - 1));
+        else WaveFull[Index] = (uint16_t) (WS3a4 * (NWAVEFULL - 1));
       }
       else if (WaveShape == 4) // Square Root Function "wave" (Up & Down)
       {
         //y = A*(x + B)^0.5 + C
-        if ((Index + WS4b) < 0) //Square Root of a negative number is imaginary therefore set to zero
-        {
-          WaveFull[Index] = 0;
-        }
+        if ((Index + WS4b) < 0) WaveFull[Index] = 0; //Square Root of a negative number is imaginary therefore set to zero
         else
         {
           if ((Index >=0) && (Index < ((NWAVEFULL-1)/2)))
           {                  
-            if (WS4up == 1)
-            {
-              WaveFull[Index] = (uint16_t) ((WS4a * pow((Index + WS4b),0.5)) + WS4c);
-            }
-            else
-            {
-              WaveFull[Index] = 0;
-            }
-            
+            if (WS4up == 1) WaveFull[Index] = (uint16_t) ((WS4a * pow((Index + WS4b),0.5)) + WS4c);
+            else WaveFull[Index] = 0;
           }
           else
           {
-            if (WS4dn == 1)
-            {
-              WaveFull[Index] = (uint16_t) (-(WS4a * pow((Index + WS4b),0.5)) + WS4c);
-            }
-            else
-            {
-              WaveFull[Index] = 0;
-            }
+            if (WS4dn == 1) WaveFull[Index] = (uint16_t) (-(WS4a * pow((Index + WS4b),0.5) + WS4c));
+            else WaveFull[Index] = 0;
           }
         }
-
-        //keep wave clamped between maximum and minium values
-      if (WaveTable[Index] > 4095) WaveTable[Index] = 4095;
-      if (WaveTable[Index] < 0) WaveTable[Index] = 0;
       }
       else if (WaveShape == 5)  // Square Root Function "wave" (Up only)
       {
         //y = A*(x + B)^0.5 + C
-
-        if ((Index + WS5b) < 0) //Square Root of a negative number is imaginary therefore set to zero
-        {
-          WaveFull[Index] = 0;
-        }
-        else
-        {
-          WaveFull[Index] = (uint16_t) ((WS5a * pow((Index + WS5b),0.5)) + WS5c);
-        }
-
-        //keep wave clamped between maximum and minium values
-      if (WaveTable[Index] > 4095) WaveTable[Index] = 4095;
-      if (WaveTable[Index] < 0) WaveTable[Index] = 0;
+        if ((Index + WS5b) < 0) WaveFull[Index] = 0; // Square Root of a negative number is imaginary therefore set to zero
+        else WaveFull[Index] = (uint16_t) ((WS5a * pow((Index + WS5b),0.5)) + WS5c);
       }
-
+      WaveFull[Index] = constrain(WaveFull[Index], 0, 4095); // keep wave clamped between maximum and minium values
       //Serial.print(Index); Serial.print(" WF = "); Serial.println(WaveFull[Index]);
     }
   }
@@ -501,23 +443,15 @@ void CreateWaveTable() // WaveTable: a smaller half wave for higher freq use; fa
 {
   for (int Index = 0; Index < NWAVETABLE; Index++) // create the individual samples for the wave table - half cycle, 160 steps, 12 bit range: 4095 - 0
   {
-    if      (WaveShape == 0) // Sine wave
+    if (WaveShape == 0) // Sine wave
     {
       // y = A*sin(B*(x + C)) + D
-      WaveTable[Index] = (uint16_t) (((WS0d + WS0a * sin((((2.0 * PI) / (WS0b * NWAVETABLE)) / 2) * (Index + (WS0c * NWAVETABLE)))) * 4095.0) / 2);  //(((1 + sin((((2.0 * PI) / NWAVETABLE) / 2) * (Index + (NWAVETABLE / 2)))) * 4095.0) / 2);
-
-      //keep wave clamped between maximum and minium values
-      if (WaveTable[Index] > 4095) WaveTable[Index] = 4095;
-      if (WaveTable[Index] < 0) WaveTable[Index] = 0;
+      WaveTable[Index] = (uint16_t) (((WS0d + WS0a * sin((((2.0 * PI) / (WS0b * NWAVETABLE)) / 2) * (Index + (WS0c * NWAVETABLE)))) * 4095.0) / 2);
     }
     else if (WaveShape == 1) // Triangle wave
     {
       // y = A-B*x
-      WaveTable[Index] = (uint16_t) (((WS1a / (NWAVETABLE - 1)) * (NWAVETABLE - 1 - (WS1b * Index))) * 4095.0); //(((1.0 / (NWAVETABLE - 1)) * (NWAVETABLE - 1 - Index)) * 4095.0);
-
-      //keep wave clamped between maximum and minium values
-      if (WaveTable[Index] > 4095) WaveTable[Index] = 4095;
-      if (WaveTable[Index] < 0) WaveTable[Index] = 0;
+      WaveTable[Index] = (uint16_t) (((WS1a / (NWAVETABLE - 1)) * (NWAVETABLE - 1 - (WS1b * Index))) * 4095.0);
     }
     else if (WaveShape == 2) // Arbitrary wave
     {
@@ -532,86 +466,37 @@ void CreateWaveTable() // WaveTable: a smaller half wave for higher freq use; fa
       //y = A4 if Index > B3 && Index <= B4;
       //y = A5 else
 
-      if((WS3b0 != 0.0) && (Index >= 0) && (Index < (WS3b0 * (NWAVETABLE - 1))))
-      {
-        WaveTable[Index] = (uint16_t) (WS3a0 * (NWAVEFULL - 1));
-      }
-      else if ((WS3b1 != 0.0) && (Index >= (WS3b0 * (NWAVETABLE - 1))) && (Index < (WS3b1 * (NWAVETABLE - 1))))
-      {
-        WaveTable[Index] = (uint16_t) (WS3a1 * (NWAVEFULL - 1));
-      }
-      else if ((WS3b2 != 0.0) && (Index >= (WS3b1 * (NWAVETABLE - 1))) && (Index < (WS3b2 * (NWAVETABLE - 1))))
-      {
-        WaveTable[Index] = (uint16_t) (WS3a2 * (NWAVEFULL - 1));
-      }
-      else if ((WS3b3 != 0.0) && (Index >= (WS3b2 * (NWAVETABLE - 1))) && (Index < (WS3b3 * (NWAVETABLE - 1))))
-      {
-        WaveTable[Index] = (uint16_t) (WS3a3 * (NWAVEFULL - 1));
-      }
-      else
-      {
-        WaveTable[Index] = (uint16_t) (WS3a4 * (NWAVEFULL - 1));
-      }
-
-      //keep wave clamped between maximum and minium values
-      if (WaveTable[Index] > 4095) WaveTable[Index] = 4095;
-      if (WaveTable[Index] < 0) WaveTable[Index] = 0;
+      if((WS3b0 != 0.0) && (Index >= 0) && (Index < (WS3b0 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a0 * (NWAVEFULL - 1));
+      else if ((WS3b1 != 0.0) && (Index >= (WS3b0 * (NWAVETABLE - 1))) && (Index < (WS3b1 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a1 * (NWAVEFULL - 1));
+      else if ((WS3b2 != 0.0) && (Index >= (WS3b1 * (NWAVETABLE - 1))) && (Index < (WS3b2 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a2 * (NWAVEFULL - 1));
+      else if ((WS3b3 != 0.0) && (Index >= (WS3b2 * (NWAVETABLE - 1))) && (Index < (WS3b3 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a3 * (NWAVEFULL - 1));
+      else WaveTable[Index] = (uint16_t) (WS3a4 * (NWAVEFULL - 1));
     }      
     else if (WaveShape == 4) // Square Root Function "wave" (Up & Down)
     {
-        //y = A*(x + B)^0.5 + C
-
-        if ((Index + WS4b) < 0) //Square Root of a negative number is imaginary therefore set to zero
-        {
-          WaveTable[Index] = 0;
+      //y = A*(x + B)^0.5 + C
+      if ((Index + WS4b) < 0) WaveTable[Index] = 0; // Square Root of a negative number is imaginary therefore set to zero
+      else
+      {
+        if ((Index >=0) && (Index < ((NWAVETABLE-1)/2)))
+        {                  
+          if (WS4up == 1) WaveTable[Index] = (uint16_t) ((WS4a * pow((Index + WS4b),0.5)) + WS4c);
+          else WaveTable[Index] = 0;
         }
         else
         {
-          if ((Index >=0) && (Index < ((NWAVETABLE-1)/2)))
-          {                  
-            if (WS4up == 1)
-            {
-              WaveTable[Index] = (uint16_t) ((WS4a * pow((Index + WS4b),0.5)) + WS4c);
-            }
-            else
-            {
-              WaveTable[Index] = 0;
-            }
-          }
-          else
-          {
-            if (WS4dn == 1)
-            {
-               WaveTable[Index] = (uint16_t) (-(WS4a * pow((Index + WS4b),0.5)) + WS4c);
-            }
-            else
-            {
-              WaveTable[Index] = 0;
-            }
-          }
+          if (WS4dn == 1) WaveTable[Index] = (uint16_t) (-(WS4a * pow((Index + WS4b),0.5) + WS4c));
+          else WaveTable[Index] = 0;
         }
-
-      //keep wave clamped between maximum and minium values
-      if (WaveTable[Index] > 4095) WaveTable[Index] = 4095;
-      if (WaveTable[Index] < 0) WaveTable[Index] = 0;
+      }
     }
     else if (WaveShape == 5) // Square Root function "wave" (Up only)
     {
-      //y = A*(x + B)^0.5 + C
-
-        if ((Index + WS5b) < 0) //Square Root of a negative number is imaginary therefore set to zero
-        {
-          WaveTable[Index] = 0;
-        }
-        else
-        {
-          WaveTable[Index] = (uint16_t) ((WS5a * pow((Index + WS5b),0.5)) + WS5c);
-        }
-
-      //keep wave clamped between maximum and minium values
-      if (WaveTable[Index] > 4095) WaveTable[Index] = 4095;
-      if (WaveTable[Index] < 0) WaveTable[Index] = 0;
+    //y = A*(x + B)^0.5 + C
+      if ((Index + WS5b) < 0) WaveTable[Index] = 0; // Square Root of a negative number is imaginary therefore set to zero
+      else WaveTable[Index] = (uint16_t) ((WS5a * pow((Index + WS5b),0.5)) + WS5c);
     }
+    WaveTable[Index] = constrain(WaveTable[Index], 0, 4095); // keep wave clamped between maximum and minium values
     //    Serial.print(Index); Serial.print(" WT = "); Serial.println(WaveTable[Index]);
   }
 }
@@ -906,412 +791,402 @@ void loop()
     }
   }
   /***********************************************************************************************/
-  if (Serial.available() > 0)
+  if (Serial.available())
   {
-    bool bReadChar = 0; //initialize Read flag
-    String InputString;
-    InputString = Serial.readString();
-    //Parse out UserInput from InputString
-    if (InputString.length() > 1)
+    if (a == 0) UserInput = Serial.parseFloat(SKIP_NONE); // If not currently creating Arbitrary wave, read float related characters until other character appears, then stop.
+    InputChar = Serial.read(); // read all characters (including numbers) after initial (float) numbers
+//    Serial.print("   InputChar = "); Serial.println(InputChar);
+    delay(1); // short delay to ensure InputChar is read correctly next
+    if (InputChar == 'x') // read all characters into ExtraChars[] array:
     {
-      int    sLen;
-      String sTemp;
-      sLen = InputString.length();
-      sTemp = InputString.substring( 0 , sLen - 1);
-      UserInput = sTemp.toDouble();
+      ExtraChars[0] = 'x';
+      for (byte i = 1; Serial.available(); i++) // keep reading serial to the end
+      {
+        ExtraChars[min(3, i)] = Serial.read(); // fill no more than 4 places in array (including 0)
+        delay(2); // short delay to ensure next serial char is always ready to be read without corruption
+      }
+      if (Serial.available() > 0) {Serial.print(" Serial still available"); Serial.println(Serial.read());} // Should never be any serial left - this message would signal an error
+//      Serial.print("   UserInput = "); Serial.print(UserInput); Serial.print("  ExtraChars["); Serial.print(ExtraChars[0]); Serial.print(ExtraChars[1]); Serial.print(ExtraChars[2]); Serial.println("]");
     }
-    else
+    if (a == 1 && InputChar >= '0' && InputChar <= '9') // If currently receiving arbitrary wave, can't use parseFloat above because aritrary wave can contain '-'
     {
-      UserInput = 0.0;
+      UserInput = (UserInput * 10) + (InputChar - '0'); // create (positive) int one character at a time. '0' = 48 in ASCII table (followed by 1-9), so must subtract it before adding to UserInput.
+//      Serial.print("   UserInput = "); Serial.println(UserInput);
     }
-
-    if (bReadChar == 0)
+    else // if finished parsing UserInput variable
     {
-      //**********************************************************
-      // Extra "X" controls for Waves with equations and variables
-      bReadChar = 1;
-      if (InputString.length() == 2 && InputString.endsWith("XX")) //Updates Wave Tables
+      //************************** Block of extra parameter code: ********************************/
+      if (ExtraChars[0] == 'x')
       {
-        CreateWaveFull();
-        CreateWaveTable();
-        CreateNewWave();
-        Serial.println("   Wave Tables updated and refreshed.\n");
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("X")) // Extra commands - help
-      {
-        Serial.println("   Extra Commands HELP for Extra X controls for Waves with equations and variables:  Type the following, then press enter:");
-        Serial.println("   Type:   X  to list all Extra X commands.");
-        Serial.println("   Type:   Xw  to list Wave shapes.");
-        Serial.println("   Type:   Xw0  to list Wave Shape 0 variables (change number for other wave shapes (e.g. Xw1, Xw2, Xw3, etc.).");
-        Serial.println("   Type:   XX  to update all wave tables (e.g. after variable changes completed).\n");
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw")) // Wave shapes
-      {
-        Serial.println("   Wave Shape 0 = Sine wave.");
-        Serial.println("   Wave Shape 1 = Triangle wave");
-        Serial.println("   Wave Shape 3 = Stepped Square wave function wave");
-        Serial.println("   Wave Shape 4 = Square Root function wave (Up & Down)");
-        Serial.println("   Wave Shape 5 = Square Root function wave (Up only)\n");
-        bReadChar = 0;
-      }
-      //**********
-      else if (InputString.endsWith("Xw0")) // Wave Shape 0 variables
-      {
-        Serial.println("   Wave Shape 0 - Sine Wave variables.");
-        Serial.println("   y = A*sin(B(x + C)) + D");
-        Serial.println("   Xw0a = A - Amplitude (default = 1.0)");
-        Serial.println("   Xw0b = B - Waveshape Period (default = 1.0)");
-        Serial.println("   Xw0c = C - Phase Shift (default = 0.5)");
-        Serial.println("   Xw0d = D - Vertical Shift (default = 1.0)\n");
-        Serial.println("   Current values: ");
-        Serial.print("A = "); Serial.print(WS0a); Serial.print(", B = "); Serial.print(WS0b); Serial.print(", C = "); Serial.print(WS0c); Serial.print(", D = "); Serial.print(WS0d);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw0a"))
-      {
-        WS0a = UserInput;
-        Serial.println("   Wave Shape 0 A - Sine Amplitude changed to: "); 
-        Serial.print(UserInput);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw0b"))
-      {
-        WS0b = UserInput;
-        Serial.println("   Wave Shape 0 B - Sine Waveshape period changed to: "); 
-        Serial.print(UserInput);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw0c"))
-      {
-        WS0c = UserInput;
-        Serial.println("   Wave Shape 0 C - Sine Phase Shift changed to: "); 
-        Serial.print(UserInput);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw0d"))
-      {
-        WS0d = UserInput;
-        Serial.println("   Wave Shape 0 D - Sine Vertical Shift changed to: "); 
-        Serial.print(UserInput);
-        bReadChar = 0;
-      }
-
-      //**********
-      else if (InputString.endsWith("Xw1")) // Wave Shape 1 variables
-      {
-        Serial.println("   Wave Shape 1 - Triangle Wave variables.");
-        Serial.println("   y = A-Bx");
-        Serial.println("   Xw1a = Vertical Shift (default = 1.0)");
-        Serial.println("   Xw1b = Slope (default = 1.0)\n");
-        Serial.println("   Current values: ");
-        Serial.print("A = "); Serial.print(WS1a); Serial.print(", B = "); Serial.print(WS1b);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw1a"))
-      {
-        WS1a = UserInput;
-        Serial.println("   Wave Shape 1 A - Triangle vertical shift changed to: "); 
-        Serial.print(UserInput);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw1b"))
-      {
-        WS1b = UserInput;
-        Serial.println("   Wave Shape 1 B - Triangle slope changed to: "); 
-        Serial.print(UserInput);
-        bReadChar = 0;
-      }
-
-      //**********
-      else if (InputString.endsWith("Xw3")) // Wave Shape 3 variables
-      {
-        Serial.println("   Wave Shape 3 - Stepped Square wave variables.");
-        Serial.println("   Enter values between 0.0 and 1.0 for all variables.");
-        Serial.println("   Values for x range must be increasing from left to right (see default values for example).");
-        Serial.println("   y = a0, a1, a2, a3 or a4");
-        Serial.println("   x range = b0, b1, b2, b3");
-        Serial.println("   Xw3a0, Xw3a1, Xw3a2, Xw3a3, Xw3a4 (default values = 0.50, 1.0, 0.0, 0.75, 0.30)");
-        Serial.println("   Xw3b0, Xw3b1, Xw3b2, Xw3b3 (default values = 0.20, 0.50, 0.60, 0.75, Xw3b4 is not used)");
-        Serial.println("   To turn off a segment set b to 0 (e.g. use command 0Xw3b0)\n");
-        Serial.println("   Current values: ");
-        Serial.println("   y = "); Serial.print(WS3a0); Serial.print(", "); Serial.print(WS3a1); Serial.print(", "); Serial.print(WS3a2); Serial.print(", "); Serial.print(WS3a3); Serial.print(", "); Serial.print(WS3a4);
-        Serial.println("   x = "); Serial.print(WS3b0); Serial.print(", "); Serial.print(WS3b1); Serial.print(", "); Serial.print(WS3b2); Serial.print(", "); Serial.print(WS3b3);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw3a0"))
-      {
-        if ((UserInput >= 0) && (UserInput <= 1.0))
+        if (ExtraChars[1] == 'x') // if received xx Update Wave Tables:
         {
-          WS3a0 = UserInput;
-          Serial.println("   Wave Shape 3 a0 - Stepped Square Wave changed to: "); Serial.print(UserInput);
+          CreateWaveFull();
+          CreateWaveTable();
+          CreateNewWave();
+          Serial.println("\n   Wave Tables updated and refreshed.\n");
         }
-        else
+        else if (ExtraChars[1] == 'w') // if received xw List Wave shapes
         {
-          Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.");
+          Serial.println("\n   Wave Shape 0 = Sine wave.");
+          Serial.println(  "   Wave Shape 1 = Triangle wave");
+          Serial.println(  "   Wave Shape 3 = Stepped Square wave function wave");
+          Serial.println(  "   Wave Shape 4 = Square Root function wave (Up & Down)");
+          Serial.println(  "   Wave Shape 5 = Square Root function wave (Up only)\n");
         }
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw3a1"))
-      {
-        if ((UserInput >= 0) && (UserInput <= 1.0))
-        {
-          WS3a1 = UserInput;
-          Serial.println("   Wave Shape 3 a1 - Stepped Square Wave changed to: "); Serial.print(UserInput);
-        }
-        else
-        {
-          Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.");
-        }
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw3a2"))
-      {
-        if ((UserInput >= 0) && (UserInput <= 1.0))
-        {
-          WS3a2 = UserInput;
-          Serial.println("   Wave Shape 3 a2 - Stepped Square Wave changed to: "); Serial.print(UserInput);          
-        }
-        else
-        {
-          Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.");
-        }
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw3a3"))
-      {
-        if ((UserInput >= 0) && (UserInput <= 1.0))
-        {
-          WS3a3 = UserInput;
-          Serial.println("   Wave Shape 3 a3 - Stepped Square Wave changed to: "); Serial.print(UserInput);
-        }
-        else
-        {
-          Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.");
-        }
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw3a4"))
-      {
-        if ((UserInput >= 0) && (UserInput <= 1.0))
-        {
-          WS3a4 = UserInput;
-          Serial.println("   Wave Shape 3 a4 - Stepped Square Wave changed to: "); Serial.print(UserInput);
-        }
-        else
-        {
-          Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.");
-        }
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw3b0"))
-      {
-        if ((UserInput == 0) || ((UserInput > 0) && (UserInput <= 1.0) && (UserInput < WS3b1)))
-        {
-          WS3b0 = UserInput;
-          Serial.println("   Wave Shape 3 b0 - Stepped Square Wave changed to: "); 
-          Serial.println(UserInput);
-        }
-        else
-        {
-          Serial.println("   Not valid input. Must enter number between 0.0 and 1.0 and less than next x range value.");
-        }        
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw3b1"))
-      {
-        if ((UserInput == 0) || ((UserInput > 0) && (UserInput <= 1.0) && (UserInput < WS3b2)))
-        {
-          WS3b1 = UserInput;
-          Serial.println("   Wave Shape 3 b1 - Stepped Square Wave changed to: "); 
-          Serial.println(UserInput);      
-        }
-        else
-        {
-          Serial.println("   Not valid input. Must enter number between 0.0 and 1.0 and less than next x range value.");
-        }        
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw3b2"))
-      {
-        if ((UserInput == 0) || ((UserInput > 0) && (UserInput <= 1.0) && (UserInput < WS3b3)))
-        {
-          WS3b2 = UserInput;
-          Serial.println("   Wave Shape 3 b2 - Stepped Square Wave changed to: "); 
-          Serial.println(UserInput);
-        }
-        else
-        {
-          Serial.println("   Not valid input. Must enter number between 0.0 and 1.0 and less than next x range value.");
-        } 
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw3b3"))
-      {
-        if ((UserInput == 0) || ((UserInput > 0) && (UserInput <= 1.0) && (UserInput > WS3b2)))
-        {
-          WS3b3 = UserInput;
-          Serial.println("   Wave Shape 3 b3 - Stepped Square Wave changed to: "); 
-          Serial.println(UserInput);
-        }
-        else
-        {
-          Serial.println("   Not valid input. Must enter number between 0.0 and 1.0 and is greater than the previous x range value.");
-        }         
-        bReadChar = 0;
-      }  
-
-      //**********
-      else if (InputString.endsWith("Xw4")) // Wave Shape 4 variables
-      {
-        Serial.println("   Wave Shape 4 - Square Root function wave variables (Up & Down).");
-        Serial.println("   y = A(x + B)^0.5 + C");
-        Serial.println("   Xw4a = A (default = 50.0)");
-        Serial.println("   Xw4b = B (default = 0.0)");
-        Serial.println("   Xw4c = C Vertical Shift (default = 0.0)");
-        Serial.println("   Xw4up = Upper portion of the function (default = 1). Value must be 1 or 0 only (boolean).");
-        Serial.println("   Xw4dn = Lower portion of the function (default = 1). Value must be 1 or 0 only (boolean).\n");
-        Serial.println("   Try A = -50 and C = 4095 and change values of Xw4up and Xw4dn.\n");
-        Serial.println("   Current values: ");
-        Serial.println("   A, B, C, Up, Down = "); Serial.print(WS4a); Serial.print(", "); Serial.print(WS4b); Serial.print(", "); Serial.print(WS4c); Serial.print(", "); Serial.print(WS4up); Serial.print(", "); Serial.print(WS4dn);
-        Serial.println("");
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw4a"))
-      {
-        WS4a = UserInput;
-        Serial.println("   Wave Shape 4 - Square Root function A (Up & Down) changed to: "); 
-        Serial.println(UserInput);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw4b"))
-      {
-        WS4b = UserInput;
-        Serial.println("   Wave Shape 4 - Square Root function B (Up & Down) changed to: "); 
-        Serial.println(UserInput);
-
-        bReadChar = 0;
-      }     
-      else if (InputString.endsWith("Xw4c"))
-      {
-        WS4c = UserInput;
-        Serial.println("   Wave Shape 4 - Square Root function C Vertical Shift (Up & Down) changed to: "); 
-        Serial.println(UserInput);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw4up"))
-      {
-        WS4up = UserInput;
-        Serial.println("   Wave Shape 4 - Square Root function A (Up) changed to: "); 
-        Serial.println(UserInput);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw4dn"))
-      {
-        WS4dn = UserInput;
-        Serial.println("   Wave Shape 4 - Square Root function A (Down) changed to: "); 
-        Serial.println(UserInput);
-        bReadChar = 0;
-      }
-
-      //**********
-      else if (InputString.endsWith("Xw5")) // Wave Shape 5 variables
-      {
-        Serial.println("   Wave Shape 5 - Square Root function wave variables (Up only).");
-        Serial.println("   y = A(x + B)^0.5 + C");
-        Serial.println("   Xw5a = A (default = 50.0)");
-        Serial.println("   Xw5b = B (default = 0.0)");
-        Serial.println("   Xw5c = C Vertical Shift (default = 0.0)\n");
-        Serial.println("   Try A = -50 and C = 4095\n");
-        Serial.println("   Current values: ");
-        Serial.println("   A, B, C = "); Serial.print(WS5a); Serial.print(", "); Serial.print(WS5b); Serial.print(", "); Serial.print(WS5c);
-        Serial.println("");
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw5a"))
-      {
-        WS5a = UserInput;
-        Serial.println("   Wave Shape 5 - Square Root function A (Up only) changed to: "); 
-        Serial.println(UserInput);
-        bReadChar = 0;
-      }
-      else if (InputString.endsWith("Xw5b"))
-      {
-        WS5b = UserInput;
-        Serial.println("   Wave Shape 5 - Square Root function B (Up only) changed to: "); 
-        Serial.println(UserInput);
-        bReadChar = 0;
-      }     
-      else if (InputString.endsWith("Xw5c"))
-      {
-        WS5c = UserInput;
-        Serial.println("   Wave Shape 5 - Square Root function C Vertical Shift (Up only) changed to: "); 
-        Serial.println(UserInput);
-        bReadChar = 0;
-      }
-
-      
-      
-      
-      //********** This must be the last code block in this section ************
-      //check for more than 1 alpha character in InputString
-      if (bReadChar == 1)
-      {
-        int numAchar = 0;
-        char  testChar;
-        for (int i=0; i<InputString.length(); i++)
-        {
-          testChar = InputString.charAt(i);
-          if (isAlpha(testChar))
+        else if (ExtraChars[1] == '0')      //  if received 0 - Wave Shape 0 variables:
+        {            
+          if (ExtraChars[2] == 'a') // if received x0a
           {
-            numAchar = numAchar + 1;
+            WS0a = UserInput;
+            Serial.print("   Wave Shape 0 A - Sine Amplitude changed to: "); 
+            Serial.println(UserInput);
+          }
+          else if (ExtraChars[2] == 'b') // if received x0b
+          {
+            WS0b = UserInput;
+            Serial.print("   Wave Shape 0 B - Sine Waveshape period changed to: "); 
+            Serial.println(UserInput);
+          }
+          else if (ExtraChars[2] == 'c') // if received x0c
+          {
+            WS0c = UserInput;
+            Serial.print("   Wave Shape 0 C - Sine Phase Shift changed to: "); 
+            Serial.println(UserInput);
+          }
+          else if (ExtraChars[2] == 'd') // if received x0d
+          {
+            WS0d = UserInput;
+            Serial.print("   Wave Shape 0 D - Sine Vertical Shift changed to: "); 
+            Serial.println(UserInput);
+          }
+          else // if received x0 with no more char's after it - Wave Shape 0 variables:
+          {
+            Serial.println("\n   Wave Shape 0 - Sine Wave variables.");
+            Serial.println(  "        y = A*sin(B(x + C)) + D\n");
+            Serial.println(  "   x0a = A - Amplitude (default = 1.0)");
+            Serial.println(  "   x0b = B - Waveshape Period (default = 1.0)");
+            Serial.println(  "   x0c = C - Phase Shift (default = 0.5)");
+            Serial.println(  "   x0d = D - DC Offset (default = 1.0)\n");
+            Serial.println(  "             Current values: ");
+            Serial.print(    "   A = "); Serial.print(WS0a); Serial.print(", B = "); Serial.print(WS0b); Serial.print(", C = "); Serial.print(WS0c); Serial.print(", D = "); Serial.println(WS0d); Serial.println("");
           }
         }
-        if (numAchar > 1)
+        else if (ExtraChars[1] == '1')    // if recieved 1 - Wave Shape 1 variables:
         {
-          bReadChar = 0; //Error in input (i.e. more than 1 alpha character) therefore do not process below
-        }
-      }
-      //**********************************************************
-    }
-    if (bReadChar == 1)
-    {
-      //*********************************************
-      InputChar = InputString.charAt(InputString.length() - 1); //Serial.read();
-      // Message Format To Set Frequency in Hz:  1000h + "send".
-      if (InputChar >= '0' && InputChar <= '9')
-      {
-        UserInput = (UserInput * 10) + (InputChar - '0');
-        if (numDecimalPlaces >= 0) numDecimalPlaces++; // if one of the previous characters was '.' count the number of decimal places typed
-      }
-      else if (InputChar == '.') numDecimalPlaces = 0; // prepare to start counting decimal places typed
-      //**********************************************
-      else
-      {
-        if ((InputChar == 't' && !UsingGUI && TimerMode == 0) || (InputChar == 'T' && UsingGUI)) // if entering Timer Mode:
-        {
-          if (SquareWaveSync) TimerMode = 2; // if SquareWaveSync was HIGH before entering timer mode
-          else TimerMode = 1; // if SquareWaveSync was LOW before entering timer mode
-          SquareWaveSync = LOW; // stop Synchronized Square wave
-          TimerRun = 0;
-          REG_PIOC_PER |= PIO_PER_P28; // PIO takes control of pin 3 from peripheral - similar to pinMode(3, OUTPUT)
-          REG_PIOC_ODR |= PIO_ODR_P28; // PIO disables pin 3 (C28) - similar to pinMode(3, INPUT)
-          PWMC_DisableChannel(PWM_INTERFACE, g_APinDescription[7].ulPWMChannel);
-          NVIC_DisableIRQ(TC1_IRQn);
-          pinMode(7, OUTPUT);
-          if (TimerInvert) digitalWrite(7, HIGH);
-          else digitalWrite(7, LOW);
-          TimeUp = 0;
-          if (UsingGUI) Serial.println("TimerMode");
-          else
+          if (ExtraChars[2] == 'a') // if received x1a
           {
-            TC_setup5(); // (use timer in GUI if running)
-            Serial.println(String("           ********** Timer Mode **********\n   The current time period is: ") + d + String(" days, ") + h + String(" hours, ") + m + String(" mins, ") + s + String(" secs.\n"));
-            Serial.println("   To make changes enter the desired number followed by:\n   d for Days, h for Hours, m for Minutes or s for Seconds\n\n   Then type r to start running. Or type t again to exit.\n");
+            WS1a = UserInput;
+            Serial.print("   Wave Shape 1 A - Triangle vertical shift changed to: "); 
+            Serial.println(UserInput);
+          }
+          else if (ExtraChars[2] == 'b') // if received x1b
+          {
+            WS1b = UserInput;
+            Serial.println("   Wave Shape 1 B - Triangle slope changed to: "); 
+            Serial.print(UserInput);
+          }
+          else // if received x1 with no more char's after it - Wave Shape 1 variables:
+          {
+            Serial.println("\n   Wave Shape 1 - Triangle Wave variables.");
+            Serial.println(  "          y = A-Bx\n");
+            Serial.println(  "   x1a = A - Vertical Shift (default = 1.0)");
+            Serial.println(  "   x1b = B - Slope (default = 1.0)\n");
+            Serial.println(  "             Current values: ");
+            Serial.print(    "   A = "); Serial.print(WS1a); Serial.print(", B = "); Serial.print(WS1b); Serial.println("");
           }
         }
-        else if (InputChar == 't' && TimerMode > 0) // if exiting Timer Mode
+        else if (ExtraChars[1] == '3')    // if recieved 3 - Wave Shape 3 variables:
+        {
+          if (ExtraChars[2] == 'a')       // if recieved x3a
+          {
+            if (ExtraChars[3] == '0')     // if recieved x3a0
+            {
+              if ((UserInput >= 0) && (UserInput <= 1.0))
+              {
+                WS3a0 = UserInput;
+                Serial.println("   Wave Shape 3 a0 - Stepped Square Wave changed to: "); 
+                Serial.print(UserInput);
+              }
+              else Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.\n");
+            }
+            else if (ExtraChars[3] == '1')    // if recieved x3a1
+            {
+              if ((UserInput >= 0) && (UserInput <= 1.0))
+              {
+                WS3a1 = UserInput;
+                Serial.println("   Wave Shape 3 a1 - Stepped Square Wave changed to: "); 
+                Serial.print(UserInput);
+              }
+              else Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.\n");
+            }
+            else if (ExtraChars[3] == '2')    // if recieved x3a2
+            {
+              if ((UserInput >= 0) && (UserInput <= 1.0))
+              {
+                WS3a2 = UserInput;
+                Serial.println("   Wave Shape 3 a2 - Stepped Square Wave changed to: "); 
+                Serial.print(UserInput);          
+              }
+              else Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.\n");
+            }
+            else if (ExtraChars[3] == '3')    //if recieved x3a3
+            {
+              if ((UserInput >= 0) && (UserInput <= 1.0))
+              {
+                WS3a3 = UserInput;
+                Serial.println("   Wave Shape 3 a3 - Stepped Square Wave changed to: "); 
+                Serial.print(UserInput);
+              }
+              else Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.\n");
+            }
+            else if (ExtraChars[3] == '4')    //if recieved x3a4
+            {
+              if ((UserInput >= 0) && (UserInput <= 1.0))
+              {
+                WS3a4 = UserInput;
+                Serial.println("   Wave Shape 3 a4 - Stepped Square Wave changed to: "); 
+                Serial.print(UserInput);
+              }
+              else Serial.println("   Not valid input. Must enter number between 0.0 and 1.0.\n");
+            }
+            else Serial.println("   Not valid input.\n"); 
+          }
+          if (ExtraChars[2] == 'b') // if recieved x3b
+          {
+             if (ExtraChars[3] == '0')     // if recieved x3b0
+             {
+                if ((UserInput == 0) || ((UserInput > 0) && (UserInput <= 1.0) && (UserInput < WS3b1)))
+                {
+                  WS3b0 = UserInput;
+                  Serial.println("   Wave Shape 3 b0 - Stepped Square Wave changed to: "); 
+                  Serial.println(UserInput);
+                }
+                else Serial.println("   Not valid input. Must enter number between 0.0 and 1.0 and less than next x range value.");
+             }
+             else if (ExtraChars[3] == '1')    // if recieved x3b1
+             {
+                if ((UserInput == 0) || ((UserInput > 0) && (UserInput <= 1.0) && (UserInput < WS3b2)))
+                {
+                  WS3b1 = UserInput;
+                  Serial.println("   Wave Shape 3 b1 - Stepped Square Wave changed to: "); 
+                  Serial.println(UserInput);      
+                }
+                else Serial.println("   Not valid input. Must enter number between 0.0 and 1.0 and less than next x range value.");
+             }
+             else if (ExtraChars[3] == '2')   // if recieved x3b2
+             {
+                if ((UserInput == 0) || ((UserInput > 0) && (UserInput <= 1.0) && (UserInput < WS3b3)))
+                {
+                  WS3b2 = UserInput;
+                  Serial.println("   Wave Shape 3 b2 - Stepped Square Wave changed to: "); 
+                  Serial.println(UserInput);
+                }
+                else Serial.println("   Not valid input. Must enter number between 0.0 and 1.0 and less than next x range value.");
+             }
+             else if (ExtraChars[3] == '3')   // if recieved x3b3
+             {
+                if ((UserInput == 0) || ((UserInput > 0) && (UserInput <= 1.0) && (UserInput > WS3b2)))
+                {
+                  WS3b3 = UserInput;
+                  Serial.println("   Wave Shape 3 b3 - Stepped Square Wave changed to: "); 
+                  Serial.println(UserInput);
+                }
+                else Serial.println("   Not valid input. Must enter number between 0.0 and 1.0 and is greater than the previous x range value.");
+             }
+             else Serial.println("   Not valid input.\n");
+          }
+          else  // if received x3 with no more char's after it - Wave Shape 3 variables:
+          {
+            Serial.println("\n   Wave Shape 3 - Stepped Square wave variables.");
+            Serial.println(  "   Enter values between 0.0 and 1.0 for all variables.");
+            Serial.println(  "   Values for x range must be increasing from left to right (see default values for example).");
+            Serial.println(  "          y = a0, a1, a2, a3 or a4");
+            Serial.println(  "          x range = b0, b1, b2, b3\n");
+            Serial.println(  "          x3a0, x3a1, x3a2, x3a3, x3a4 (default values = 0.50, 1.0, 0.0, 0.75, 0.30)");
+            Serial.println(  "          x3b0, x3b1, x3b2, x3b3 (default values = 0.20, 0.50, 0.60, 0.75, x3b4 is not used)");
+            Serial.println(  "   To turn off a segment set b to 0 (e.g. use command 0x3b0)\n");
+            Serial.println(  "          Current values: ");
+            Serial.print(  "   y: a0 = "); Serial.print(WS3a0); Serial.print(", a1 = "); Serial.print(WS3a1); Serial.print(", a2 = "); Serial.print(WS3a2); Serial.print(", a3 = "); Serial.print(WS3a3); Serial.print(", a4 = "); Serial.print(WS3a4); Serial.println("");
+            Serial.print(  "   x: b0 = "); Serial.print(WS3b0); Serial.print(", b1 = "); Serial.print(WS3b1); Serial.print(", b2 = "); Serial.print(WS3b2); Serial.print(", b3 = "); Serial.print(WS3b3); Serial.println("");
+          }
+        }
+        else if (ExtraChars[1] == '4')    // if recieved 4 - Wave Shape 4 variables:
+        {
+          if (ExtraChars[2] == 'a') // if recieved x4a
+          {
+            WS4a = UserInput;
+            Serial.println("   Wave Shape 4 - Square Root function A (Up & Down) changed to: "); 
+            Serial.println(UserInput);            
+          }
+          else if (ExtraChars[2] == 'b')    // if recieved x4b
+          {
+            WS4b = UserInput;
+            Serial.println("   Wave Shape 4 - Square Root function B (Up & Down) changed to: "); 
+            Serial.println(UserInput);            
+          }
+          else if (ExtraChars[2] == 'c')    // if recieved x4c
+          {
+            WS4c = UserInput;
+            Serial.println("   Wave Shape 4 - Square Root function C Vertical Shift (Up & Down) changed to: "); 
+            Serial.println(UserInput);            
+          }
+          else if (ExtraChars[2] == 'u')    //if recieved x4u
+          {
+            if ((UserInput == 1) || (UserInput == 0))
+            {
+              WS4up = UserInput;
+              Serial.println("   Wave Shape 4 - Square Root function A (Up) changed to: "); 
+              Serial.println(UserInput);  
+            }
+            else Serial.println("   Not valid input for x4u. Must enter either 1 or 0 only (e.g. 1x4u).\n");
+          }
+          else if (ExtraChars[2] == 'd')    //if recieved x4d
+          {
+            if ((UserInput == 1) || (UserInput == 0))
+            {
+              WS4dn = UserInput;
+              Serial.println("   Wave Shape 4 - Square Root function A (Down) changed to: "); 
+              Serial.println(UserInput);  
+            }
+            else Serial.println("   Not valid input for x4d. Must enter either 1 or 0 only (e.g. 0x4d).\n");
+          }
+          else  // if recieved x4 with no more char's after it - Wave Shape 4 variables:
+          {
+            Serial.println("\n   Wave Shape 4 - Square Root function wave variables (Up & Down).");
+            Serial.println(  "          Upper portion: y = A(x + B)^0.5 + C");
+            Serial.println(  "          Lower portion: y = -(A(x + B)^0.5) + C\n");
+            Serial.println(  "   x4a = A (default = 50.0)");
+            Serial.println(  "   x4b = B (default = 0.0)");
+            Serial.println(  "   x4c = C Vertical Shift (default = 0.0)");
+            Serial.println(  "   x4u = Upper portion of the function (default = 1). Value must be 1 or 0 only (boolean).");
+            Serial.println(  "   x4d = Lower portion of the function (default = 1). Value must be 1 or 0 only (boolean).\n");
+            Serial.println(  "   Hint: Try A = -50 and C = 2047 and change values of x4u and x4d.\n");
+            Serial.println(  "   Current values: ");
+            Serial.print(  "   A = "); Serial.print(WS4a); Serial.print(", B = "); Serial.print(WS4b); Serial.print(", C = "); Serial.print(WS4c); Serial.print(", Up = "); Serial.print(WS4up); Serial.print(", Down = "); Serial.print(WS4dn); Serial.println("");            
+          }     
+        }
+        else if (ExtraChars[1] == '5')   // if recieved 5 - Wave Shape 5 variables:
+        {
+          if (ExtraChars[2] == 'a')   // if recieved x5a
+          {
+            WS5a = UserInput;
+            Serial.println("   Wave Shape 5 - Square Root function A (Up only) changed to: "); 
+            Serial.println(UserInput);
+          }
+          else if (ExtraChars[2] == 'b')    // if recieved x5b
+          {
+            WS5b = UserInput;
+            Serial.println("   Wave Shape 5 - Square Root function B (Up only) changed to: "); 
+            Serial.println(UserInput);            
+          }
+          else if (ExtraChars[2] == 'c')   // if recieved x5c
+          {
+            WS5c = UserInput;
+            Serial.println("   Wave Shape 5 - Square Root function C Vertical Shift (Up only) changed to: "); 
+            Serial.println(UserInput);            
+          }
+          else  // if revieved x5 with no more char's after it - Wave Shape 5 variables:
+          {
+            Serial.println("\n   Wave Shape 5 - Square Root function wave variables (Up only).");
+            Serial.println(  "          y = A(x + B)^0.5 + C\n");
+            Serial.println(  "   x5a = A (default = 50.0)");
+            Serial.println(  "   x5b = B (default = 0.0)");
+            Serial.println(  "   x5c = C Vertical Shift (default = 0.0)\n");
+            Serial.println(  "   Hint: Try A = -50 and C = 4095\n");
+            Serial.println(  "   Current values: ");
+            Serial.print(  "   A = "); Serial.print(WS5a); Serial.print(", B = "); Serial.print(WS5b); Serial.print(", C = "); Serial.print(WS5c); Serial.println("");            
+          }  
+        }
+        else // if received x followed by line feed or x plus any other invalid or unused characters
+        {
+          Serial.println("   HELP for Extra parameters for Waves with equations and variables.\n   Type the following, then press enter:\n");
+  //      Serial.println("   Type:    x  to list all Extra commands."); // NOT NEEDED - ALREADY USED TO GET HERE
+          Serial.println("   Type:   xw  to list Wave shapes.");
+          Serial.println("   Type:   x0  to list Wave Shape 0 variables. (Change number for other wave shapes (e.g. x1, x3, x4, etc.). Note x2 is Arbitrary wave with no variables.");
+          Serial.println("   Type:   xx  to update all wave tables (e.g. after variable changes completed).\n");
+        }
+        for (byte i = 0; i < 3; i++) ExtraChars[i] = 'z'; // Change to unused characters  
+//        Serial.print("1248   InputChar = "); Serial.println(InputChar);
+      }    
+      //************************** END of Block of extra parameter modifying code ********************************/ 
+      else if (a == 1) // if currently creating Arbitrary wave
+      {
+        if (InputChar == ',') // Arbitrary wave creation - point separator / counter
+        {
+          if (ArbitraryPointNumber > 0 && ArbitraryPointNumber % 10 == 0) Serial.print("\n   "); // start a new line after every 10 points entered
+          ArbitraryWave[ArbitraryPointNumber] = UserInput; // save Wave point data
+          if (ArbitraryPointNumber == 0 && ArbitraryWaveStep[ArbitraryPointNumber] == -1) Serial.print("   You entered:\n   ");
+          Serial.print(ArbitraryWave[ArbitraryPointNumber]); Serial.print(",");
+          if (ArbitraryPointNumber < NARBWAVE - 1) ArbitraryPointNumber++;
+        }
+        else if (InputChar == '-') // Arbitrary wave creation - stepped point separator
+        {
+          ArbitraryWaveStep[ArbitraryPointNumber] = UserInput; // save Wave Step data
+          if (ArbitraryPointNumber == 0) Serial.print("   You entered:\n   ");
+          Serial.print(ArbitraryWaveStep[ArbitraryPointNumber]); Serial.print("-");
+        }
+        else if (InputChar == ';') // Arbitrary wave creation - last point detector / signal to create wave
+        {
+          ArbitraryWave[ArbitraryPointNumber] = UserInput;
+          Serial.print(ArbitraryWave[ArbitraryPointNumber]); Serial.println(";");
+          if (ArbitraryPointNumber < NARBWAVE) ArbitraryPointNumber++;
+          ArbitraryWave[ArbitraryPointNumber] = ArbitraryWave[0]; // make last point same as first
+          ArbitraryWaveStep[ArbitraryPointNumber] = ArbitraryWaveStep[0];
+          Serial.print("   ..... a total of "); Serial.print(ArbitraryPointNumber);
+          if (ArbitraryPointNumber < NARBWAVE - 1) Serial.println(" points.\n");
+          else Serial.println(" points. THIS IS THE MAXIMUM LIMIT\n");
+          WaveShape = 2;
+          CreateWaveFull();
+          CreateWaveTable();
+          CreateNewWave();
+          Serial.println("   Set duty-cycle to 0% (Type 0d). Other duty-cycle settings create a 'mirrored' effect.");
+          Serial.println("   Typing 'a' again (to enter a new arbitrary wave) will clear the current wave from memory.");
+          if (ArbitraryPointNumber < 300) Serial.println("   Or you can just add more points!\n   ");
+          else Serial.println("\n   ");
+          a = 0;
+        }
+      }
+      else if (InputChar == 'a' && TimerMode == 0) // Arbitrary wave creation - deletes old wave data, ready for new wave data
+      {
+        a = 1;
+        ArbitraryPointNumber = 0;
+        for (int16_t i = 0; i <= 4096; i++) {
+          ArbitraryWaveStep[i] = -1; // resets any stepped points to 'unstepped' state
+        }
+        Serial.println("");
+        Serial.println("         ************************* NEW ARBITRARY WAVE CREATION *************************        \n");
+        Serial.println("   Please type the value of each point you wish to define. (Any old data has been deleted.)");
+        Serial.println("   Separate each value (0 to 4095) with a comma. Use no spaces. Finish with a semi-colon.\n");
+        Serial.println("   For example:\n   2047,2150,3800,4095,3800,400,200,400,2510,2700,2510,1800,1700,1800,2040,2150,2050,1980,1960,2000;\n");
+        Serial.println("   You can create steps in the wave by dividing points into two values.\n   For example, an 'M' wave:  0,0-4095,1600,4095-0;\n");
+        Serial.println("   You can define up to 300 points, but enter them no more than 40 at a time, ending with a comma.");
+        Serial.println("   Use a semi-colon at the end to trigger wave creation. Points can also be added later. (300 total)\n");
+      }
+      else if ((InputChar == 't' && !UsingGUI && TimerMode == 0) || (InputChar == 'T' && UsingGUI)) // if entering Timer Mode:
+      {
+        if (SquareWaveSync) TimerMode = 2; // if SquareWaveSync was HIGH before entering timer mode
+        else TimerMode = 1; // if SquareWaveSync was LOW before entering timer mode
+        SquareWaveSync = LOW; // stop Synchronized Square wave
+        TimerRun = 0;
+        REG_PIOC_PER |= PIO_PER_P28; // PIO takes control of pin 3 from peripheral - similar to pinMode(3, OUTPUT)
+        REG_PIOC_ODR |= PIO_ODR_P28; // PIO disables pin 3 (C28) - similar to pinMode(3, INPUT)
+        PWMC_DisableChannel(PWM_INTERFACE, g_APinDescription[7].ulPWMChannel);
+        NVIC_DisableIRQ(TC1_IRQn);
+        pinMode(7, OUTPUT);
+        if (TimerInvert) digitalWrite(7, HIGH);
+        else digitalWrite(7, LOW);
+        TimeUp = 0;
+        if (UsingGUI) Serial.println("TimerMode");
+        else
+        {
+          TC_setup5(); // (use timer in GUI if running)
+          Serial.println(String("           ********** Timer Mode **********\n   The current time period is: ") + d + String(" days, ") + h + String(" hours, ") + m + String(" mins, ") + s + String(" secs.\n"));
+          Serial.println("   To make changes enter the desired number followed by:\n   d for Days, h for Hours, m for Minutes or s for Seconds\n\n   Then type r to start running. Or type t again to exit.\n");
+        }
+      }
+      else if (TimerMode > 0) // If in Timer mode:
+      {
+        if (InputChar == 't' ) // if exiting Timer Mode
         {
           if (TimerMode == 2 || TargetFreq < 163) // if SquareWaveSync was HIGH before entering timer mode or low freq
           {
@@ -1329,7 +1204,7 @@ void loop()
           TimerRun = 0;
           Serial.println("   You have exited the Timer.\n");
         }
-        else if (TimerMode > 0 && UsingGUI && (InputChar == 'D' || InputChar == 'H' || InputChar == 'M' || InputChar == 'S'))
+        else if (UsingGUI && (InputChar == 'D' || InputChar == 'H' || InputChar == 'M' || InputChar == 'S'))
         {
           if (InputChar == 'D')
           {
@@ -1352,7 +1227,7 @@ void loop()
             else            PeriodS = int(UserInput);
           }
         }
-        else if (TimerMode > 0 && !UsingGUI && (InputChar == 'd' || InputChar == 'h' || InputChar == 'm' || InputChar == 's'))
+        else if (!UsingGUI && (InputChar == 'd' || InputChar == 'h' || InputChar == 'm' || InputChar == 's'))
         {
           if      (InputChar == 'd') d = int(UserInput);
           else if (InputChar == 'h') h = int(UserInput);
@@ -1362,7 +1237,7 @@ void loop()
           if (h > 23 || m > 59 || s > 59) Serial.println("   Sorry but that is invalid. Please try again.\n");
           else Serial.println("   To enter this time period type e\n");
         }
-        else if (TimerMode > 0 && !UsingGUI && InputChar == 'e') // TIMER PERIOD ADJUSTMENT:
+        else if (!UsingGUI && InputChar == 'e') // TIMER PERIOD ADJUSTMENT:
         {
           // PERIOD ADJUSTMENT: in Time Period Entry Mode
           PeriodD = d;
@@ -1371,19 +1246,19 @@ void loop()
           if (s <= 59) PeriodS = s;
           Serial.println(String("** You entered: ") + PeriodD + String(" days, ") + PeriodH + String(" hours, ") + PeriodM + String(" mins, ") + PeriodS + String(" secs.\n\n   Type r to start Running. Type r again to Reset.\n"));
         }
-        else if (TimerMode > 0 && UsingGUI && InputChar == 'U')
+        else if (UsingGUI && InputChar == 'U')
         {
           TimeUp = 1;
           Serial.println("   Time Up!");
           if (TimerInvert) digitalWrite(7, LOW);
           else digitalWrite(7, HIGH);
         }
-        else if (TimerMode > 0 && UsingGUI && InputChar == 'R')
+        else if (UsingGUI && InputChar == 'R')
         {
           TimerRun = 1;
           Serial.println("   Timer Running...");
         }
-        else if (TimerMode > 0 && InputChar == 'r')
+        else if (InputChar == 'r')
         {
           TimeUp = 0;
           if (TimerInvert) digitalWrite(7, HIGH); // Restart cycle
@@ -1406,463 +1281,414 @@ void loop()
           }
           else Serial.println("   Timer Reset!\n");
         }
-        else if (TimerMode > 0 && InputChar == 'i')
+        else if (InputChar == 'i')
         {
           TimerInvert = false;
           digitalWrite(7, LOW);
           Serial.println("  Positive Timer Mode.\n");
         }
-        else if (TimerMode > 0 && InputChar == 'I')
+        else if (InputChar == 'I')
         {
           TimerInvert = true;
           digitalWrite(7, HIGH);
           Serial.println("  Negative Timer Mode.\n");
         }
-        else if (InputChar == 'h' || InputChar == 'm') // FREQ or PERIOD ADJUSTMENT:  in Hertz or Milliseconds
+      }
+      else if (InputChar == 'h' || InputChar == 'm') // FREQ or PERIOD ADJUSTMENT:  in Hertz or Milliseconds
+      {
+//        UserInput = UserInput * pow(10, min(0, -numDecimalPlaces)); // multiply input by 10 to the power of minus the number of decimal places
+//        numDecimalPlaces = -1; // reset
+        if (InputChar == 'm') UserInput = 1000 / UserInput; // convert period into freq
+        if (UserInput >= 0.00001999 && UserInput <= 42000000)
         {
-          UserInput = UserInput * pow(10, min(0, -numDecimalPlaces)); // multiply input by 10 to the power of minus the number of decimal places
-          numDecimalPlaces = -1; // reset
-          if (InputChar == 'm') UserInput = 1000 / UserInput; // convert period into freq
-          if (UserInput >= 0.00001999 && UserInput <= 42000000)
+          if (Control > 0) // sync'ed waves
           {
-            if (Control > 0) // sync'ed waves
+            PotAdjFreq[1] = 0;
+            if (TargetWavePulseWidth > 0) TargetWaveDuty = min(100, 100 * (TargetWavePulseWidth / (1000000 / min(UserInput, 100961.54)))); // convert pulse width input into %
+            TargetWaveFreq = min(UserInput, 100961.54);
+            SetWaveFreq(1);
+          }
+          if (Control != 1) // unsync'ed sq.wave
+          {
+            PotAdjFreq[0] = 0;
+            if (TargetPulseWidth > 0) TargetDuty = min(100, 100 * (TargetPulseWidth / (1000000 / min(UserInput, 42000000)))); // convert pulse width input into %
+            TargetFreq = UserInput;
+            SetFreqAndDuty(1, 1);
+            Serial.print("   Unsync'ed Sq.Wave Freq: "); PrintUnsyncedSqWaveFreq(); Serial.print(", Target: "); Serial.print(UserInput, 3);
+            Serial.print(" Hz\n   Unsync'ed Sq.Wave Period: ");
+            PrintUnsyncedSqWavePeriod(); // PrintUnsyncedSqWaveDuty();
+            Serial.print("   Unsync'ed Sq.Wave Duty-cycle: "); Serial.print(ActualDuty); Serial.println(" %\n");
+          }
+          if ((!SquareWaveSync && TargetFreq < 0.5) || (SquareWaveSync && TargetWaveFreq < 0.5))
+          {
+            if (millis() - 500 < TouchedTime) // if freq or period entered twice (if double clicked)
             {
-              PotAdjFreq[1] = 0;
-              if (TargetWavePulseWidth > 0) TargetWaveDuty = min(100, 100 * (TargetWavePulseWidth / (1000000 / min(UserInput, 100961.54)))); // convert pulse width input into %
-              TargetWaveFreq = min(UserInput, 100961.54);
-              SetWaveFreq(1);
-            }
-            if (Control != 1) // unsync'ed sq.wave
-            {
-              PotAdjFreq[0] = 0;
-              if (TargetPulseWidth > 0) TargetDuty = min(100, 100 * (TargetPulseWidth / (1000000 / min(UserInput, 42000000)))); // convert pulse width input into %
-              TargetFreq = UserInput;
-              SetFreqAndDuty(1, 1);
-              Serial.print("   Unsync'ed Sq.Wave Freq: "); PrintUnsyncedSqWaveFreq(); Serial.print(", Target: "); Serial.print(UserInput, 3);
-              Serial.print(" Hz\n   Unsync'ed Sq.Wave Period: ");
-              PrintUnsyncedSqWavePeriod(); // PrintUnsyncedSqWaveDuty();
-              Serial.print("   Unsync'ed Sq.Wave Duty-cycle: "); Serial.print(ActualDuty); Serial.println(" %\n");
-            }
-            if ((!SquareWaveSync && TargetFreq < 0.5) || (SquareWaveSync && TargetWaveFreq < 0.5))
-            {
-              if (millis() - 500 < TouchedTime) // if freq or period entered twice (if double clicked)
+              if (SquareWaveSync) // sync'ed waves
               {
-                if (SquareWaveSync) // sync'ed waves
+                WaveBit = 1; // reset sync'ed waves
+                if (TargetWaveDuty == 0)
                 {
-                  WaveBit = 1; // reset sync'ed waves
-                  if (TargetWaveDuty == 0)
-                  {
-                    WaveHalf = 0;
-                    TC2->TC_CHANNEL[1].TC_CMR = TC_CMR_WAVE | TC_CMR_ASWTRG_CLEAR;
-                  }
-                  else
-                  {
-                    WaveHalf = 1;
-                    TC2->TC_CHANNEL[1].TC_CMR = TC_CMR_WAVE | TC_CMR_ASWTRG_SET;
-                  }
+                  WaveHalf = 0;
+                  TC2->TC_CHANNEL[1].TC_CMR = TC_CMR_WAVE | TC_CMR_ASWTRG_CLEAR;
                 }
-                else // unsync'ed sq.wave
+                else
                 {
-                  TimeIncrement = 0; // reset unsync'ed sq wave
-                  if (TargetDuty < 100) PeriodHalf = 0;
-                  else PeriodHalf = 1;
-                  if (TargetDuty == 0) TC2->TC_CHANNEL[1].TC_CMR = TC_CMR_WAVE | TC_CMR_ASWTRG_CLEAR;
-                  else TC2->TC_CHANNEL[1].TC_CMR = TC_CMR_WAVE | TC_CMR_ASWTRG_SET;
+                  WaveHalf = 1;
+                  TC2->TC_CHANNEL[1].TC_CMR = TC_CMR_WAVE | TC_CMR_ASWTRG_SET;
                 }
-                TC_Start(TC1, 1); // Reset timer
-                TC2->TC_CHANNEL[1].TC_CCR = TC_CCR_SWTRG; // the counter is reset and the clock is started
-                LowFreqDisplay = 1;
-                TouchedTime = 0;
               }
-              else TouchedTime = millis();
+              else // unsync'ed sq.wave
+              {
+                TimeIncrement = 0; // reset unsync'ed sq wave
+                if (TargetDuty < 100) PeriodHalf = 0;
+                else PeriodHalf = 1;
+                if (TargetDuty == 0) TC2->TC_CHANNEL[1].TC_CMR = TC_CMR_WAVE | TC_CMR_ASWTRG_CLEAR;
+                else TC2->TC_CHANNEL[1].TC_CMR = TC_CMR_WAVE | TC_CMR_ASWTRG_SET;
+              }
+              TC_Start(TC1, 1); // Reset timer
+              TC2->TC_CHANNEL[1].TC_CCR = TC_CCR_SWTRG; // the counter is reset and the clock is started
+              LowFreqDisplay = 1;
+              TouchedTime = 0;
             }
-          }
-          else if (InputChar == 'h') {
-            Serial.print("   ");
-            Serial.print(UserInput);
-            Serial.println(" Hz is outside required freq range\n");
-          }
-          else                       {
-            Serial.print("   ");
-            Serial.print(1 / UserInput);
-            Serial.println(" Secs is outside required period range\n");
+            else TouchedTime = millis();
           }
         }
-        else if (InputChar == 'd' || InputChar == 'u') // DUTY CYCLE or PULSE WIDTH ADJUSTMENT: in % or microseconds
+        else if (InputChar == 'h') {
+          Serial.print("   ");
+          Serial.print(UserInput);
+          Serial.println(" Hz is outside required freq range\n");
+        }
+        else                       {
+          Serial.print("   ");
+          Serial.print(1 / UserInput);
+          Serial.println(" Secs is outside required period range\n");
+        }
+      }
+      else if (InputChar == 'd' || InputChar == 'u') // DUTY CYCLE or PULSE WIDTH ADJUSTMENT: in % or microseconds
+      {
+//        UserInput = UserInput * pow(10, min(0, -numDecimalPlaces)); // multiply input by 10 to the power of minus the number of decimal places
+//        numDecimalPlaces = -1; // reset
+        if ((InputChar == 'd' && UserInput >= 0 && UserInput <= 100) || InputChar == 'u')
         {
-          UserInput = UserInput * pow(10, min(0, -numDecimalPlaces)); // multiply input by 10 to the power of minus the number of decimal places
-          numDecimalPlaces = -1; // reset
-          if ((InputChar == 'd' && UserInput >= 0 && UserInput <= 100) || InputChar == 'u')
+          if (Control > 0) // synchronized waves
           {
-            if (Control > 0) // synchronized waves
+            PotAdjDuty[1] = 0;
+            if (InputChar == 'u')
             {
-              PotAdjDuty[1] = 0;
-              if (InputChar == 'u')
-              {
-                TargetWavePulseWidth = UserInput;
-                TargetWaveDuty = 100 * (UserInput / (1000000 / ActualWaveFreq)); // convert pulse width input into %
-              }
-              else
-              {
-                TargetWavePulseWidth = 0;
-                TargetWaveDuty = UserInput;
-              }
-              CalculateWaveDuty(0);
-              if (MinOrMaxWaveDuty) CalculateWaveDuty(0); // if at 0 or 100% duty-cycle re-calculate (for stability)
-              CreateNewWave();
-              Serial.print("   Analogue Wave Duty-cycle: "); Serial.print(ActualWaveDuty); Serial.print(" %, Target: "); Serial.print(TargetWaveDuty); Serial.println(" %");
-              Serial.print("   Analogue Wave Period: "); PrintSyncedWavePeriod(); Serial.println("\n");
+              TargetWavePulseWidth = UserInput;
+              TargetWaveDuty = 100 * (UserInput / (1000000 / ActualWaveFreq)); // convert pulse width input into %
             }
-            if (Control != 1) // unsynchronized Square wave
+            else
             {
-              PotAdjDuty[0] = 0;
-              if (InputChar == 'u')
-              {
-                TargetPulseWidth = UserInput;
-                TargetDuty = 100 * (UserInput / (1000000 / ActualFreq)); // convert pulse width input into %
-              }
-              else
-              {
-                TargetPulseWidth = 0;
-                TargetDuty = UserInput;
-              }
-              SetFreqAndDuty(0, 1);
-              Serial.print("   Unsync'ed Sq.Wave Duty-cycle: "); Serial.print(ActualDuty); Serial.print(" %, Target: "); Serial.print(TargetDuty); Serial.println(" %");
-              Serial.print("   Unsync'ed Sq.Wave Period: "); PrintUnsyncedSqWavePeriod(); Serial.println("\n");
+              TargetWavePulseWidth = 0;
+              TargetWaveDuty = UserInput;
+            }
+            CalculateWaveDuty(0);
+            if (MinOrMaxWaveDuty) CalculateWaveDuty(0); // if at 0 or 100% duty-cycle re-calculate (for stability)
+            CreateNewWave();
+            Serial.print("   Analogue Wave Duty-cycle: "); Serial.print(ActualWaveDuty); Serial.print(" %, Target: "); Serial.print(TargetWaveDuty); Serial.println(" %");
+            Serial.print("   Analogue Wave Period: "); PrintSyncedWavePeriod(); Serial.println("\n");
+          }
+          if (Control != 1) // unsynchronized Square wave
+          {
+            PotAdjDuty[0] = 0;
+            if (InputChar == 'u')
+            {
+              TargetPulseWidth = UserInput;
+              TargetDuty = 100 * (UserInput / (1000000 / ActualFreq)); // convert pulse width input into %
+            }
+            else
+            {
+              TargetPulseWidth = 0;
+              TargetDuty = UserInput;
+            }
+            SetFreqAndDuty(0, 1);
+            Serial.print("   Unsync'ed Sq.Wave Duty-cycle: "); Serial.print(ActualDuty); Serial.print(" %, Target: "); Serial.print(TargetDuty); Serial.println(" %");
+            Serial.print("   Unsync'ed Sq.Wave Period: "); PrintUnsyncedSqWavePeriod(); Serial.println("\n");
+          }
+        }
+      }
+      else if (InputChar == 'w') // Change Wave Shape
+      {
+        if (WaveShape < NumWS) WaveShape++;
+        else WaveShape = 0;
+        CreateWaveFull();
+        CreateWaveTable();
+        CreateNewWave();
+        if      (WaveShape == 0) Serial.println("             ********** Sine Wave *********\n");
+        else if (WaveShape == 1) Serial.println("             ******** Triangle Wave *******\n");
+        else if (WaveShape == 2) Serial.println("             ******* Arbitrary Wave *******\n");
+        else if (WaveShape == 3) Serial.println("             ******** Stepped Square Wave *******\n");
+        else if (WaveShape == 4) Serial.println("             ******** Square Root Function Wave (Up & Down) *******\n");
+        else if (WaveShape == 5) Serial.println("             ******** Square Root Function Wave (Up only) *******\n");
+      }
+      else if (InputChar == 'M') // Min & max duty
+      {
+        if (UserInput >= 1 && UserInput <= 7) MinMaxDuty = UserInput;
+        else MinMaxDuty = 4;
+        Serial.print("   You have temporarily set MinMaxDuty to "); Serial.print(MinMaxDuty); Serial.println("  It will be reset to 4 by typing 'M' or 'v')\n");
+      }
+      else if (InputChar == 'H') // square wave sync delay at High sample rate
+      {
+        if (UserInput >= 1) Delay1 = min(UserInput, 25);
+        else Delay1 = 10; // 10;
+        SyncDelay = (TimerCounts - Delay1) * Delay2 * max((Delay3 / (abs(ActualWaveDuty - 50.0) + Delay3)), int(MinOrMaxWaveDuty));
+        Serial.print("   You have set Delay1 to "); Serial.print(Delay1); Serial.println("  It should be set to 10 (Type 'H')\n");
+      }
+      else if (InputChar == 'L') // square wave sync delay at Low sample rate
+      {
+        if (UserInput >= 1) Delay2 = min(UserInput * 0.01, 50);
+        else Delay2 = 0.55; // 0.36;
+        SyncDelay = (TimerCounts - Delay1) * Delay2 * max((Delay3 / (abs(ActualWaveDuty - 50.0) + Delay3)), int(MinOrMaxWaveDuty));
+        Serial.print("   You have set Delay2 to "); Serial.print(Delay2 * 100, 0); Serial.println("  It should be set to 55 (Type 'L')\n");
+      }
+      else if (InputChar == 'D') // square wave sync delay at High sample rate
+      {
+        if (UserInput >= 50) Delay3 = min(UserInput, 200);
+        else Delay3 = 110;
+        SyncDelay = (TimerCounts - Delay1) * Delay2 * max((Delay3 / (abs(ActualWaveDuty - 50.0) + Delay3)), int(MinOrMaxWaveDuty));
+        Serial.print("   You have set Delay3 to "); Serial.print(Delay3, 0); Serial.println("  It should be set to 110 (Type 'D')\n");
+      }
+      else if (InputChar == 'v' && TimerMode == 0) // toggle between Viewing sync'ed square wave or unsync'ed square wave
+      {
+        ToggleSquareWaveSync();
+      }
+      else if (PotsEnabled && InputChar == 'r') // Range of Freq / Period Pots
+      {
+        if (Control > 0) // synchronized waves range:
+        {
+          if (Range[1] < 10000) Range[1] *= 10;
+          else Range[1] = 1;
+          Serial.print("   Synchronized Waves Pot Freq Range: x "); Serial.println(Range[1]);
+        }
+        if (Control != 1) // unsynchronized sq.wave range:
+        {
+          if (Range[0] < 10000) Range[0] *= 10;
+          else Range[0] = 1;
+          Serial.print("   Unsync'ed Sq.Wave Pot Freq Range: x "); Serial.println(Range[0]);
+        }
+        SwitchPressedTime = millis();
+      }
+      else if (PotsEnabled && InputChar == 'R') // Range of Duty-cycle / Pulse Width Pots
+      {
+        if (Control > 0) // synchronized waves range:
+        {
+          if (Range[3] < 10000) Range[3] *= 10;
+          else Range[3] = 1;
+          Serial.print("   Synchronized Waves Pot Pulse Width Range: x "); Serial.println(Range[3]);
+        }
+        if (Control != 1) // unsynchronized sq.wave range:
+        {
+          if (Range[2] < 10000) Range[2] *= 10;
+          else Range[2] = 1;
+          Serial.print("   Unsync'ed Sq.Wave Pot Pulse Width Range: x "); Serial.println(Range[2]);
+        }
+        SwitchPressedTime = millis();
+      }
+      else if (PotsEnabled && InputChar == 'f' && TimerMode == 0) // toggle between pot controlling Freq of wave, or period of wave
+      {
+        if (Control > 0)
+        {
+          PotPeriodMode[1] = !PotPeriodMode[1]; // toggle PotPeriodMode for synch'ed waves
+          Serial.print("   Synchronized Waves Pot Mode is ");
+          if      (PotPeriodMode[1] == 0) Serial.println("Freq");
+          else if (PotPeriodMode[1] == 1) Serial.println("Period");
+        }
+        if (Control != 1)
+        {
+          PotPeriodMode[0] = !PotPeriodMode[0]; // toggle PotPeriodMode for unsynch'ed wave
+          Serial.print("   Unsynchronized Wave Pot Mode is ");
+          if      (PotPeriodMode[0] == 0) Serial.println("Freq");
+          else if (PotPeriodMode[0] == 1) Serial.println("Period");
+        }
+        Serial.println("");
+        SwitchPressedTime = millis();
+      }
+      else if (InputChar == 'e') // Exact Freq Mode - low resolution at 50% duty-cycle only & with dithering synchronized square wave
+      {
+        ToggleExactFreqMode();
+      }
+      else if (InputChar == ' ' && TimerMode == 0) // space-bar - toggle control between sync'ed waves & unsync'ed sq.wave
+      {
+        if (Control == 1)
+        {
+          Control = 0;
+          Serial.println("   CONTROL >> Unsync'ed Sq.Wave\n");
+        }
+        else
+        {
+          Control = 1;
+          Serial.println("   CONTROL >> Analogue Wave\n");
+        }
+      }
+      else if (InputChar == 'b' && TimerMode == 0) // control both analogue wave & Unsync'ed sq.wave together
+      {
+        Control = 2;
+        Serial.println("   CONTROL >> Both Waves\n");
+      }
+      else if (InputChar == 's' && TimerMode == 0) // Sweep freq function
+      {
+//        UserInput = UserInput * pow(10, min(0, -numDecimalPlaces)); // multiply input by 10 to the power of minus the number of decimal places
+//        numDecimalPlaces = -1; // reset
+        if (SweepStep > 0 && SweepStep != 3 && SweepStep != 4 && UserInput == 0) // cancel / delete entry & stop sweep if running
+        {
+          SweepStep = 0;
+          Serial.println("   Sweep cancelled\n");
+          return;
+        }
+        if (SweepStep == 0)
+        {
+          if (!UsingGUI)
+          {
+            Serial.println("       ************ SWEEP FREQUENCY FUNCTION ************");
+            Serial.println("   Please type the minimum sweep frequency in Hz followed by s\n   (Typing s again without entering a number first will cancel)");
+          }
+          SweepStep = 1;
+        }
+        if (SweepStep == 1 && UserInput > 0)
+        {
+          SweepMinFreq = UserInput;
+          SweepStep = 2;
+          if (!UsingGUI)
+          {
+            Serial.print("   The minimum sweep frequency is "); Serial.print(SweepMinFreq); Serial.println(" Hz");
+            Serial.println("   Please type the maximum sweep frequency in Hz followed by s");
+          }
+        }
+        else if (SweepStep == 2 && UserInput > 0)
+        {
+          if (UserInput > SweepMinFreq)
+          {
+            SweepMaxFreq = UserInput;
+            SweepStep = 3;
+            if (!UsingGUI)
+            {
+              Serial.print("   The maximum sweep frequency is "); Serial.print(SweepMaxFreq); Serial.println(" Hz");
+              Serial.println("   Please type the sweep rise time in seconds followed by s");
             }
           }
-        }
-        else if (InputChar == 'w') // Change Wave Shape
-        {
-          if (WaveShape < NumWS) WaveShape++;
-          else WaveShape = 0;
-          CreateWaveFull();
-          CreateWaveTable();
-          CreateNewWave();
-          if      (WaveShape == 0) Serial.println("             ********** Sine Wave *********\n");
-          else if (WaveShape == 1) Serial.println("             ******** Triangle Wave *******\n");
-          else if (WaveShape == 2) Serial.println("             ******* Arbitrary Wave *******\n");
-          else if (WaveShape == 3) Serial.println("             ******** Stepped Square Wave *******\n");
-          else if (WaveShape == 4) Serial.println("             ******** Square Root Function Wave (Up & Down) *******\n");
-          else if (WaveShape == 5) Serial.println("             ******** Square Root Function Wave (Up only) *******\n");
-        }
-        else if (InputChar == 'M') // Min & max duty
-        {
-          if (UserInput >= 1 && UserInput <= 7) MinMaxDuty = UserInput;
-          else MinMaxDuty = 4;
-          Serial.print("   You have temporarily set MinMaxDuty to "); Serial.print(MinMaxDuty); Serial.println("  It will be reset to 4 by typing 'M' or 'v')\n");
-        }
-        else if (InputChar == 'H') // square wave sync delay at High sample rate
-        {
-          if (UserInput >= 1) Delay1 = min(UserInput, 25);
-          else Delay1 = 10; // 10;
-          SyncDelay = (TimerCounts - Delay1) * Delay2 * max((Delay3 / (abs(ActualWaveDuty - 50.0) + Delay3)), int(MinOrMaxWaveDuty));
-          Serial.print("   You have set Delay1 to "); Serial.print(Delay1); Serial.println("  It should be set to 10 (Type 'H')\n");
-        }
-        else if (InputChar == 'L') // square wave sync delay at Low sample rate
-        {
-          if (UserInput >= 1) Delay2 = min(UserInput * 0.01, 50);
-          else Delay2 = 0.55; // 0.36;
-          SyncDelay = (TimerCounts - Delay1) * Delay2 * max((Delay3 / (abs(ActualWaveDuty - 50.0) + Delay3)), int(MinOrMaxWaveDuty));
-          Serial.print("   You have set Delay2 to "); Serial.print(Delay2 * 100, 0); Serial.println("  It should be set to 55 (Type 'L')\n");
-        }
-        else if (InputChar == 'D') // square wave sync delay at High sample rate
-        {
-          if (UserInput >= 50) Delay3 = min(UserInput, 200);
-          else Delay3 = 110;
-          SyncDelay = (TimerCounts - Delay1) * Delay2 * max((Delay3 / (abs(ActualWaveDuty - 50.0) + Delay3)), int(MinOrMaxWaveDuty));
-          Serial.print("   You have set Delay3 to "); Serial.print(Delay3, 0); Serial.println("  It should be set to 110 (Type 'D')\n");
-        }
-        else if (InputChar == 'v' && TimerMode == 0) // toggle between Viewing sync'ed square wave or unsync'ed square wave
-        {
-          ToggleSquareWaveSync();
-        }
-        else if (PotsEnabled && InputChar == 'r') // Range of Freq / Period Pots
-        {
-          if (Control > 0) // synchronized waves range:
+          else if (!UsingGUI)
           {
-            if (Range[1] < 10000) Range[1] *= 10;
-            else Range[1] = 1;
-            Serial.print("   Synchronized Waves Pot Freq Range: x "); Serial.println(Range[1]);
+            Serial.print("\n   The maximum sweep frequency must be higher than the minimum entered which was "); Serial.print(SweepMinFreq);
+            Serial.println(" Hz\n   Please re-enter the maximum sweep frequency\n");
           }
-          if (Control != 1) // unsynchronized sq.wave range:
-          {
-            if (Range[0] < 10000) Range[0] *= 10;
-            else Range[0] = 1;
-            Serial.print("   Unsync'ed Sq.Wave Pot Freq Range: x "); Serial.println(Range[0]);
-          }
-          SwitchPressedTime = millis();
         }
-        else if (PotsEnabled && InputChar == 'R') // Range of Duty-cycle / Pulse Width Pots
+        else if (SweepStep == 3 && UserInput >= 0)
         {
-          if (Control > 0) // synchronized waves range:
+          SweepRiseTime = UserInput;
+          SweepStep = 4;
+          if (!UsingGUI)
           {
-            if (Range[3] < 10000) Range[3] *= 10;
-            else Range[3] = 1;
-            Serial.print("   Synchronized Waves Pot Pulse Width Range: x "); Serial.println(Range[3]);
+            Serial.print("   The sweep rise time is "); Serial.print(SweepRiseTime); Serial.println(" Secs");
+            Serial.println("   Please type the sweep fall time in seconds followed by s");
           }
-          if (Control != 1) // unsynchronized sq.wave range:
-          {
-            if (Range[2] < 10000) Range[2] *= 10;
-            else Range[2] = 1;
-            Serial.print("   Unsync'ed Sq.Wave Pot Pulse Width Range: x "); Serial.println(Range[2]);
-          }
-          SwitchPressedTime = millis();
         }
-        else if (PotsEnabled && InputChar == 'f' && TimerMode == 0) // toggle between pot controlling Freq of wave, or period of wave
+        else if (SweepStep == 4 && UserInput >= 0)
         {
-          if (Control > 0)
+          if (UserInput > 0 || SweepRiseTime > 0)
           {
-            PotPeriodMode[1] = !PotPeriodMode[1]; // toggle PotPeriodMode for synch'ed waves
-            Serial.print("   Synchronized Waves Pot Mode is ");
-            if      (PotPeriodMode[1] == 0) Serial.println("Freq");
-            else if (PotPeriodMode[1] == 1) Serial.println("Period");
+            SweepFallTime = UserInput;
+            SweepStep = 5;
+            if (!UsingGUI)
+            {
+              Serial.print("   The sweep fall time is "); Serial.print(SweepFallTime); Serial.println(" Secs");
+              Serial.print("   To repeat this freq sweep the following string can be entered:\n\n   ");
+              Serial.println(SweepMinFreq + String("s") + SweepMaxFreq + String("s") + SweepRiseTime + String("s") + SweepFallTime + String("s\n"));
+              Serial.println("   Type s again to stop the sweep\n");
+              delay(2000); // time to read above message
+            }
+            SweepFreq();
           }
-          if (Control != 1)
+          else if (!UsingGUI)
           {
-            PotPeriodMode[0] = !PotPeriodMode[0]; // toggle PotPeriodMode for unsynch'ed wave
-            Serial.print("   Unsynchronized Wave Pot Mode is ");
+            Serial.print("\n   The Sweep Rise Time and Fall Time can't both be zero");
+            Serial.println("\n   Please re-enter the Sweep Fall Time\n");
+          }
+        }
+      }
+      else if (InputChar == 'p') PotsEnabled = !PotsEnabled; // enable / disable Pots
+      else if (InputChar == 'P')
+      {
+        if (Control > 0) // synchronized waves range:
+        {
+          PotPulseWidth[1] = !PotPulseWidth[1]; // enable / disable pulse width input from pot instead of duty-cycle %
+        }
+        if (Control != 1) // unsynchronized waves range:
+        {
+          PotPulseWidth[0] = !PotPulseWidth[0]; // enable / disable pulse width input from pot instead of duty-cycle %
+        }
+        SwitchPressedTime = millis();
+      }
+      else if (InputChar == '?') // Help
+      {
+        Serial.println("   HELP:  Type the following, then press enter:");
+        Serial.println("   Type:   w   to toggle the analogue Wave shape.");
+        Serial.println("   Type:   a   to create a new Arbitrary wave. Follow on-screen instructions.");
+        Serial.println("   Type:   v   to toggle between Viewing synchronized or unsynchronized waves.");
+        Serial.println("   Type:  ' '  [spacebar] to toggle between controlling synchronized waves or unsync'ed square wave.");
+        Serial.println("   Type:   b   to control Both synchronized and unsynchronized waves simultaneously.");
+        Serial.println("   Type:   h   to change frequency of wave/s, type required frequency in Hz followed by h.");
+        Serial.println("   Type:   m   to change period of wave/s, type required period in Milliseconds followed by m.");
+        Serial.println("   Type:   d   to change Duty-cycle type required percentage duty-cycle (0 - 100) followed by d.");
+        Serial.println("   Type:   u   to set pulse width. Type required pulse width in microseconds followed by u.");
+        Serial.println("   Type:   e   to toggle on/off Exact Freq Mode for synchronized waves, eliminating freq steps.");
+        Serial.println("   Type:   s   to set up the frequency Sweep feature. Follow on-screen instructions.");
+        Serial.println("   Type:   t   to enter or exit the Timer. Follow on-screen instructions.");
+        Serial.println("   Type:   p   to enable (or disable) pots.");
+        Serial.println("   Type:   f   to toggle between pot controlling Freq of wave, or period of wave.");
+        Serial.println("   Type:   P   to toggle between pot controlling duty-cycle Percent, or Pulse width of wave.");
+        Serial.println("   Type:   r   to toggle Range of the frequency/period pot: x 1, x10, x100, x1000 & x 10000.");
+        Serial.println("   Type:   R   to toggle Range of the pulse width pot: x 1, x10, x100, x1000 & x 10000.");
+        Serial.println("   Type:   x   to access Extra commands for each wave shape.");
+        Serial.println("   Type:   S   to display the current status.\n");
+      }
+      else if (InputChar == 'G' && millis() < 2000) // if connecting to GUI: MOD changed from 1000 to: 2000
+      {
+  //       Serial.println(millis());
+        UsingGUI = 1;
+        Serial.println("Hello GUI");
+      }
+      else if (InputChar == 'S') // CHANGED FROM if Enter pressed
+      {
+  //      if (millis() - 500 < TouchedTime) // if Enter pressed twice - display status
+  //       {
+          Serial.println("\n   STATUS:");
+          if (TimerMode > 0) Serial.println(String("   Timer period is set to: ") + PeriodD + String(" days, ") + PeriodH + String(" hours, ") + PeriodM + String(" mins, ") + PeriodS + String(" secs."));
+          if  (ExactFreqMode) Serial.print("   Exact Mode is ON ");
+          else                Serial.print("   Exact Mode is OFF");
+          if (SquareWaveSync) Serial.println("  Waves are Synchronized");
+          else                Serial.println("  Waves are Unsynchronized");
+          //          } ////e
+          if (Control > 0 && TimerMode == 0) Serial.print(">> Analogue Wave Freq: ");
+          else  Serial.print("   Analogue Wave Freq: ");
+          PrintSyncedWaveFreq();
+          Serial.print(", Analogue Wave Duty-cycle: "); Serial.print(ActualWaveDuty); Serial.println(" %");
+          Serial.print("   Analogue Wave Period: ");
+          PrintSyncedWavePeriod();
+          if (Control != 1 && TimerMode == 0) Serial.print(">> Unsync'ed Sq.Wave Freq: ");
+          else  Serial.print("   Unsync'ed Sq.Wave Freq: ");
+          PrintUnsyncedSqWaveFreq();
+          Serial.print(", Unsync'ed Sq.Wave Duty-cycle: "); Serial.print(ActualDuty); Serial.println(" %");
+          Serial.print("   Unsync'ed Sq.Wave Period: ");
+          PrintUnsyncedSqWavePeriod();
+          if (PotsEnabled)
+          {
+            Serial.print("   Pot Mode - Analog Wave: ");
+            if      (PotPeriodMode[1] == 0) Serial.print("Freq ");
+            else if (PotPeriodMode[1] == 1) Serial.print("Period");
+            Serial.print("  Unsync'ed Sq.Wave: ");
             if      (PotPeriodMode[0] == 0) Serial.println("Freq");
             else if (PotPeriodMode[0] == 1) Serial.println("Period");
+            Serial.print("   Freq Pot Range - Analog Wave: x "); Serial.print(Range[1]); Serial.print("  Unsync'ed Sq.Wave: x "); Serial.println(Range[0]);
+            if (PotPulseWidth) Serial.print("   Pulse Width Range - Analog Wave: x "); Serial.print(Range[3]); Serial.print("  Unsync'ed Sq.Wave: x "); Serial.println(Range[2]);
           }
-          Serial.println("");
-          SwitchPressedTime = millis();
-        }
-        else if (InputChar == 'e') // Exact Freq Mode - low resolution at 50% duty-cycle only & with dithering synchronized square wave
-        {
-          ToggleExactFreqMode();
-        }
-        else if (InputChar == 'a' && TimerMode == 0) // Arbitrary wave creation - deletes old wave data, ready for new wave data
-        {
-          a = 1;
-          ArbitraryPointNumber = 0;
-          for (int16_t i = 0; i <= 4096; i++) {
-            ArbitraryWaveStep[i] = -1; // resets any stepped points to 'unstepped' state
-          }
-          Serial.println("");
-          Serial.println("         ************************* NEW ARBITRARY WAVE CREATION *************************        \n");
-          Serial.println("   Please type the value of each point you wish to define. (Any old data has been deleted.)");
-          Serial.println("   Separate each value (0 to 4095) with a comma. Use no spaces. Finish with a semi-colon.\n");
-          Serial.println("   For example:\n   2047,2150,3800,4095,3800,400,200,400,2510,2700,2510,1800,1700,1800,2040,2150,2050,1980,1960,2000;\n");
-          Serial.println("   You can create steps in the wave by dividing points into two values.\n   For example, an 'M' wave:  0,0-4095,1600,4095-0;\n");
-          Serial.println("   You can define up to 300 points, but enter them no more than 40 at a time, ending with a comma.");
-          Serial.println("   Use a semi-colon at the end to trigger wave creation. Points can also be added later. (300 total)\n");
-        }
-        else if (InputChar == '-' && TimerMode == 0) // Arbitrary wave creation - stepped point separator
-        {
-          ArbitraryWaveStep[ArbitraryPointNumber] = UserInput; // save Wave Step data
-          if (ArbitraryPointNumber == 0) Serial.print("   You entered:\n   ");
-          Serial.print(ArbitraryWaveStep[ArbitraryPointNumber]); Serial.print("-");
-        }
-        else if (InputChar == ',' && TimerMode == 0) // Arbitrary wave creation - point separator / counter
-        {
-          if (ArbitraryPointNumber > 0 && ArbitraryPointNumber % 10 == 0) Serial.print("\n   "); // start a new line after every 10 points entered
-          ArbitraryWave[ArbitraryPointNumber] = UserInput; // save Wave point data
-          if (ArbitraryPointNumber == 0 && ArbitraryWaveStep[ArbitraryPointNumber] == -1) Serial.print("   You entered:\n   ");
-          Serial.print(ArbitraryWave[ArbitraryPointNumber]); Serial.print(",");
-          if (ArbitraryPointNumber < NARBWAVE - 1) ArbitraryPointNumber++;
-        }
-        else if (InputChar == ';' && TimerMode == 0) // Arbitrary wave creation - last point detector / signal to create wave
-        {
-          ArbitraryWave[ArbitraryPointNumber] = UserInput;
-          Serial.print(ArbitraryWave[ArbitraryPointNumber]); Serial.println(";");
-          if (ArbitraryPointNumber < NARBWAVE) ArbitraryPointNumber++;
-          ArbitraryWave[ArbitraryPointNumber] = ArbitraryWave[0]; // make last point same as first
-          ArbitraryWaveStep[ArbitraryPointNumber] = ArbitraryWaveStep[0];
-          Serial.print("   ..... a total of "); Serial.print(ArbitraryPointNumber);
-          if (ArbitraryPointNumber < NARBWAVE - 1) Serial.println(" points.\n");
-          else Serial.println(" points. THIS IS THE MAXIMUM LIMIT\n");
-          WaveShape = 2;
-          CreateWaveFull();
-          CreateWaveTable();
-          CreateNewWave();
-          Serial.println("   Set duty-cycle to 0% (Type 0d). Other duty-cycle settings create a 'mirrored' effect.");
-          Serial.println("   Typing 'a' again (to enter a new arbitrary wave) will clear the current wave from memory.");
-          if (ArbitraryPointNumber < 300) Serial.println("   Or you can just add more points!\n   ");
-          else Serial.println("\n   ");
-          a = 0;
-        }
-        else if (InputChar == ' ' && TimerMode == 0) // space-bar - toggle control between sync'ed waves & unsync'ed sq.wave
-        {
-          if (Control == 1)
-          {
-            Control = 0;
-            Serial.println("   CONTROL >> Unsync'ed Sq.Wave\n");
-          }
-          else
-          {
-            Control = 1;
-            Serial.println("   CONTROL >> Analogue Wave\n");
-          }
-        }
-        else if (InputChar == 'b' && TimerMode == 0) // control both analogue wave & Unsync'ed sq.wave together
-        {
-          Control = 2;
-          Serial.println("   CONTROL >> Both Waves\n");
-        }
-        else if (InputChar == 's' && TimerMode == 0) // Sweep freq function
-        {
-          UserInput = UserInput * pow(10, min(0, -numDecimalPlaces)); // multiply input by 10 to the power of minus the number of decimal places
-          numDecimalPlaces = -1; // reset
-          if (SweepStep > 0 && SweepStep != 3 && SweepStep != 4 && UserInput == 0) // cancel / delete entry & stop sweep if running
-          {
-            SweepStep = 0;
-            Serial.println("   Sweep cancelled\n");
-            return;
-          }
-          if (SweepStep == 0)
-          {
-            if (!UsingGUI)
-            {
-              Serial.println("       ************ SWEEP FREQUENCY FUNCTION ************");
-              Serial.println("   Please type the minimum sweep frequency in Hz followed by s\n   (Typing s again without entering a number first will cancel)");
-            }
-            SweepStep = 1;
-          }
-          if (SweepStep == 1 && UserInput > 0)
-          {
-            SweepMinFreq = UserInput;
-            SweepStep = 2;
-            if (!UsingGUI)
-            {
-              Serial.print("   The minimum sweep frequency is "); Serial.print(SweepMinFreq); Serial.println(" Hz");
-              Serial.println("   Please type the maximum sweep frequency in Hz followed by s");
-            }
-          }
-          else if (SweepStep == 2 && UserInput > 0)
-          {
-            if (UserInput > SweepMinFreq)
-            {
-              SweepMaxFreq = UserInput;
-              SweepStep = 3;
-              if (!UsingGUI)
-              {
-                Serial.print("   The maximum sweep frequency is "); Serial.print(SweepMaxFreq); Serial.println(" Hz");
-                Serial.println("   Please type the sweep rise time in seconds followed by s");
-              }
-            }
-            else if (!UsingGUI)
-            {
-              Serial.print("\n   The maximum sweep frequency must be higher than the minimum entered which was "); Serial.print(SweepMinFreq);
-              Serial.println(" Hz\n   Please re-enter the maximum sweep frequency\n");
-            }
-          }
-          else if (SweepStep == 3 && UserInput >= 0)
-          {
-            SweepRiseTime = UserInput;
-            SweepStep = 4;
-            if (!UsingGUI)
-            {
-              Serial.print("   The sweep rise time is "); Serial.print(SweepRiseTime); Serial.println(" Secs");
-              Serial.println("   Please type the sweep fall time in seconds followed by s");
-            }
-          }
-          else if (SweepStep == 4 && UserInput >= 0)
-          {
-            if (UserInput > 0 || SweepRiseTime > 0)
-            {
-              SweepFallTime = UserInput;
-              SweepStep = 5;
-              if (!UsingGUI)
-              {
-                Serial.print("   The sweep fall time is "); Serial.print(SweepFallTime); Serial.println(" Secs");
-                Serial.print("   To repeat this freq sweep the following string can be entered:\n\n   ");
-                Serial.println(SweepMinFreq + String("s") + SweepMaxFreq + String("s") + SweepRiseTime + String("s") + SweepFallTime + String("s\n"));
-                Serial.println("   Type s again to stop the sweep\n");
-                delay(2000); // time to read above message
-              }
-              SweepFreq();
-            }
-            else if (!UsingGUI)
-            {
-              Serial.print("\n   The Sweep Rise Time and Fall Time can't both be zero");
-              Serial.println("\n   Please re-enter the Sweep Fall Time\n");
-            }
-          }
-        }
-        else if (InputChar == 'p') PotsEnabled = !PotsEnabled; // enable / disable Pots
-        else if (InputChar == 'P')
-        {
-          if (Control > 0) // synchronized waves range:
-          {
-            PotPulseWidth[1] = !PotPulseWidth[1]; // enable / disable pulse width input from pot instead of duty-cycle %
-          }
-          if (Control != 1) // unsynchronized waves range:
-          {
-            PotPulseWidth[0] = !PotPulseWidth[0]; // enable / disable pulse width input from pot instead of duty-cycle %
-          }
-          SwitchPressedTime = millis();
-        }
-        else if (InputChar == '?') // Help
-        {
-          Serial.println("   HELP:  Type the following, then press enter:");
-          Serial.println("   Type:   w   to toggle the analogue Wave shape.");
-          Serial.println("   Type:   a   to create a new Arbitrary wave. Follow on-screen instructions.");
-          Serial.println("   Type:   v   to toggle between Viewing synchronized or unsynchronized waves.");
-          Serial.println("   Type:  ' '  [spacebar] to toggle between controlling synchronized waves or unsync'ed square wave.");
-          Serial.println("   Type:   b   to control Both synchronized and unsynchronized waves simultaneously.");
-          Serial.println("   Type:   h   to change frequency of wave/s, type required frequency in Hz followed by h.");
-          Serial.println("   Type:   m   to change period of wave/s, type required period in Milliseconds followed by m.");
-          Serial.println("   Type:   d   to change Duty-cycle type required percentage duty-cycle (0 - 100) followed by d.");
-          Serial.println("   Type:   u   to set pulse width. Type required pulse width in microseconds followed by u.");
-          Serial.println("   Type:   e   to toggle on/off Exact Freq Mode for synchronized waves, eliminating freq steps.");
-          Serial.println("   Type:   s   to set up the frequency Sweep feature. Follow on-screen instructions.");
-          Serial.println("   Type:   t   to enter or exit the Timer. Follow on-screen instructions.");
-          Serial.println("   Type:   p   to enable (or disable) pots.");
-          Serial.println("   Type:   f   to toggle between pot controlling Freq of wave, or period of wave.");
-          Serial.println("   Type:   P   to toggle between pot controlling duty-cycle Percent, or Pulse width of wave.");
-          Serial.println("   Type:   r   to toggle Range of the frequency/period pot: x 1, x10, x100, x1000 & x 10000.");
-          Serial.println("   Type:   R   to toggle Range of the pulse width pot: x 1, x10, x100, x1000 & x 10000.");
-          Serial.println("   Type:   X   to access Extra commands for each wave shape.");
-          Serial.println("   Press enter twice to display the current status.\n");
-        }
-        else if (InputChar == 'G' && millis() < 1000) // if connecting to GUI:
-        {
-          UsingGUI = 1;
-          Serial.println("Hello GUI");
-        }
-        else // if Enter pressed
-        {
-          if (millis() - 500 < TouchedTime) // if Enter pressed twice - display status
-          {
-            Serial.println("   STATUS:");
-            if (TimerMode > 0) Serial.println(String("   Timer period is set to: ") + PeriodD + String(" days, ") + PeriodH + String(" hours, ") + PeriodM + String(" mins, ") + PeriodS + String(" secs."));
-            if  (ExactFreqMode) Serial.print("   Exact Mode is ON ");
-            else                Serial.print("   Exact Mode is OFF");
-            if (SquareWaveSync) Serial.println("  Waves are Synchronized");
-            else                Serial.println("  Waves are Unsynchronized");
-            //          } ////e
-            if (Control > 0 && TimerMode == 0) Serial.print(">> Analogue Wave Freq: ");
-            else  Serial.print("   Analogue Wave Freq: ");
-            PrintSyncedWaveFreq();
-            Serial.print(", Analogue Wave Duty-cycle: "); Serial.print(ActualWaveDuty); Serial.println(" %");
-            Serial.print("   Analogue Wave Period: ");
-            PrintSyncedWavePeriod();
-            if (Control != 1 && TimerMode == 0) Serial.print(">> Unsync'ed Sq.Wave Freq: ");
-            else  Serial.print("   Unsync'ed Sq.Wave Freq: ");
-            PrintUnsyncedSqWaveFreq();
-            Serial.print(", Unsync'ed Sq.Wave Duty-cycle: "); Serial.print(ActualDuty); Serial.println(" %");
-            Serial.print("   Unsync'ed Sq.Wave Period: ");
-            PrintUnsyncedSqWavePeriod();
-            if (PotsEnabled)
-            {
-              Serial.print("   Pot Mode - Analog Wave: ");
-              if      (PotPeriodMode[1] == 0) Serial.print("Freq ");
-              else if (PotPeriodMode[1] == 1) Serial.print("Period");
-              Serial.print("  Unsync'ed Sq.Wave: ");
-              if      (PotPeriodMode[0] == 0) Serial.println("Freq");
-              else if (PotPeriodMode[0] == 1) Serial.println("Period");
-              Serial.print("   Freq Pot Range - Analog Wave: x "); Serial.print(Range[1]); Serial.print("  Unsync'ed Sq.Wave: x "); Serial.println(Range[0]);
-              if (PotPulseWidth) Serial.print("   Pulse Width Range - Analog Wave: x "); Serial.print(Range[3]); Serial.print("  Unsync'ed Sq.Wave: x "); Serial.println(Range[2]);
-            }
-            else if (millis() < 180000) Serial.println("   Press 'p' to enable / disable pots"); // only shown for 1st 3 minutes
-            Serial.println();
-            TouchedTime = 0;
-          }
-          else TouchedTime = millis();
-        }
-        UserInput = 0; // reset to 0 ready for the next sequence of digits
+          else if (millis() < 180000) Serial.println("   Press 'p' to enable / disable pots"); // only shown for 1st 3 minutes
+          Serial.println();
+          TouchedTime = 0;
+  //       }
+  //       else TouchedTime = millis();
       }
+      UserInput = 0; // reset to 0 ready for the next sequence of digits
     }
   }
 
