@@ -51,6 +51,59 @@
 // or alternatively...
 // TO CONTROL FROM THE ARDUINO SERIAL MONITOR:
 // Set your serial monitor to 115200 baud.
+// Due Arbitrary Waveform Generator by Bruce Evans 2017. (Some code adapted from the Magician, Kerry D. Wong, Mark T, MartinL, ard_newie and possibly others. Many thanks!)
+// Mostly, Capitals have been used for global variables and lower case for local variables. Any constants have ALL capitals. Although unconventional, I've personally found this more helpful.
+//
+// To use:
+// 1) Upload this sketch to Arduino Due.
+// 2) If additional board protection desired then connect pins 3 & 7 first to a resistor (approx 47 to 100 ohms) then to circuit.
+// 3) The synchronised square wave output is always taken from pin 3. The UNsyncronised square wave output is taken from pin 7, except below 163Hz when it's taken from pin 3 to maximize wave specifications.
+// 4) The analogue wave output is at DAC0 (This may be marked as DAC2 on some Arduino Due boards).
+//
+// See:  https://create.arduino.cc/projecthub/BruceEvans/arduino-due-arbitrary-waveform-generator-a9d180?f=1 and https://github.com/Bruce-Evans/ArduinoDueArbitraryWaveformGeneratorAndController/releases
+// For more background see: https://makezine.com/projects/make-35/advanced-arduino-sound-synthesis/
+//
+// User Defined Equation code modifications developed by Michael Szoke 2021 which builds upon and increases functionality.
+// Type "x" in Serial Monitor to access Extra commands for each wave shape.
+// See Github fork:  https://github.com/mszoke01/ArduinoDueArbitraryWaveformGeneratorAndController
+//
+//
+// Use the accompanying separate program to control the Arduino from your PC. See its help file (in its data folder) for more info.
+//
+// or alternatively...
+// If you want to use 2 pots to control frequency & duty cycle, use any value pots between 1k & 50k, and connect them between 0V & 3.3V (NOT 5V!) with their wipers connected to A0 & A1.
+//  If you want to use switches to control pot operation:
+//    Connect a momentary switch between the following pins: (no pull-up resistors required)
+//      pin 22 & ground - toggle: enable / disable pots (& LEDs)
+//      pin 24 & ground - toggle: Unsync'ed square wave: pot FREQ or PERIOD
+//      pin 26 & ground - cycle thru: Unsync'ed square wave: pot freq / period RANGE
+//      pin 28 & ground - toggle: Sync'ed waves: pot FREQ or PERIOD
+//      pin 30 & ground - cycle thru: Sync'ed waves: pot freq / period RANGE
+//      pin 32 & ground - toggle: Unsync'ed square wave: pot DUTY CYCLE or PULSE WIDTH
+//      pin 34 & ground - cycle thru: Unsync'ed square wave: pot pulse width RANGE (duty cycle range is fixed at 0 - 100%)
+//      pin 36 & ground - toggle: Sync'ed waves: pot DUTY CYCLE or PULSE WIDTH
+//      pin 38 & ground - cycle thru: Sync'ed waves: pot pulse width RANGE (duty cycle range is fixed at 0 - 100%)
+//      pin 40 & ground - cycle thru: WAVE SHAPE
+//      pin 42 & ground - toggle: Exact Freq Mode ON / OFF
+//      pin 44 & ground - toggle: Square Wave Sync ON / OFF
+//      pin 46 & ground - cycle thru: Which wave/s to control
+//  If you want to use LEDs to display pot operation: (not range or wave-shape)
+//    Connect a single LED or a dual colour LED or 2 back to back LEDs (in parallel) via a single resistor (approx 560 ohms) between the following pins:
+//      pins 23 & ground - indicates pots enabled (use a single LED only)
+//      pins 25 & 27 - indicates: Unsync'ed square wave: pot FREQ or PERIOD
+//      pins 29 & 31 - indicates: Sync'ed wave: pot FREQ or PERIOD
+//      pins 33 & 35 - indicates: Unsync'ed square wave: pot DUTY CYCLE or PULSE WIDTH
+//      pins 37 & 39 - indicates: Sync'ed wave: pot DUTY CYCLE or PULSE WIDTH
+//      pins 41 & ground - indicates: Exact Freq Mode ON (use a single LED only) (pin 43 is low current, so not used here)
+//      pins 45 & ground - indicates: Square Wave Sync ON (use a single LED only)
+//      pins 47 & ground - indicates: Analogue wave is being controlled (use a single LED only)
+//      pins 49 & ground - indicates: Unsynch'ed Square wave is being controlled (use a single LED only)
+//  Note: Sweep and Timer functions are not controllable by the pots & switches.
+//  Also note that when pots are enabled, the Arduino will accept commands from the pots when touched AND from the PC via USB when a signal is received.
+//
+// or alternatively...
+// TO CONTROL FROM THE ARDUINO SERIAL MONITOR:
+// Set your serial monitor to 115200 baud.
 // Type the following then press enter (or Send)
 // Type:   a   to create a new Arbitrary wave. Enter the value (between 0 and 4095) for each waypoint. Up to 4096 points. Stepped points can also be easily entered. On-screen instructions will be given. The points will be evenly spread over the period of the wave.
 // Type:   w   to toggle the analogue Wave shape between sine, triangle and arbitrary
@@ -159,16 +212,18 @@ volatile boolean WaveHalf = LOW;    // identifies current 1/2 cycle
 //(1/2 cycle ID -> v) (v <---- 0,  1,  2, 3     0,  1,  2, 3 <-- FastMode)
 volatile int  Duty[ ] [4] = {{80, 40, 20, 8}, {80, 40, 20, 8}}; // Samples per 1/2 cycle - changes with duty cycle
 // here we are storing 12 bit samples in 16 bit ints:
-uint16_t WaveFull[NWAVEFULL + 1];   // wave-table for slow mode used up to 1kHz, and in ExactFreqMode at all freq's (4096 bits)
-uint16_t WaveTable[NWAVETABLE + 1]; // wave-table for copying into Wave0 to Wave3 for fast mode use (160 bits)
-uint16_t Wave0[2][NWAVETABLE];      // wave used for direct DMA access up to 10kHz  - FastMode0 (160 bits)
-uint16_t Wave1[2][NWAVETABLE /  2]; // wave used for direct DMA access up to 20kHz  - FastMode1 (80 bits)
-uint16_t Wave2[2][NWAVETABLE /  4]; // wave used for direct DMA access up to 40kHz  - FastMode2 (40 bits)
-uint16_t Wave3[2][NWAVETABLE / 10]; // wave used for direct DMA access up to 100kHz - FastMode3 (16 bits)
-byte     WaveShape        = 0;      // 0 = Sinewave, 1 = Triangle / Sawtooth, 2 = Arbitrary, etc...
-int      TimerCounts      = 26;     // divides 42MHz (CPU timer 1) by 26 counts to produce 1.61538 MHz for DMA handler
-int      Delay1           = 10;     // square wave sync delay set at high sample rate
-float    Delay2           = 0.55;   // square wave sync delay set at low sample rate (set high 1st)
+uint16_t WaveFull[NWAVEFULL + 1];    // 1st wave half wave-table for slow mode used up to 1kHz, and in ExactFreqMode at all freq's (4096 bits) - Wave tables must be unsigned to allow table to rollover and cycle etc in Exact (Freq) Mode
+uint16_t WaveFull2[NWAVEFULL + 1];   // 2nd wave half wave-table for slow mode used up to 1kHz, and in ExactFreqMode at all freq's (4096 bits) for 2nd wave half
+uint16_t WaveTable[NWAVETABLE + 1];  // 1st wave half wave-table for copying into Wave0 to Wave3 for fast mode use (160 bits)
+uint16_t WaveTable2[NWAVETABLE + 1]; // 2nd wave half wave-table for copying into Wave0 to Wave3 for fast mode use (160 bits)
+uint16_t Wave0[2][NWAVETABLE];       // wave used for direct DMA access up to 10kHz  - FastMode0 (160 bits)
+uint16_t Wave1[2][NWAVETABLE /  2];  // wave used for direct DMA access up to 20kHz  - FastMode1 (80 bits)
+uint16_t Wave2[2][NWAVETABLE /  4];  // wave used for direct DMA access up to 40kHz  - FastMode2 (40 bits)
+uint16_t Wave3[2][NWAVETABLE / 10];  // wave used for direct DMA access up to 100kHz - FastMode3 (16 bits)
+byte     WaveShape        = 0;       // 0 = Sinewave, 1 = Triangle / Sawtooth, 2 = Arbitrary, etc...
+int      TimerCounts      = 26;      // divides 42MHz (CPU timer 1) by 26 counts to produce 1.61538 MHz for DMA handler
+int      Delay1           = 10;      // square wave sync delay set at high sample rate
+float    Delay2           = 0.55;    // square wave sync delay set at low sample rate (set high 1st)
 float    Delay3           = 110;     // square wave sync delay set at low duty
 volatile int SyncDelay    = (TimerCounts - Delay1) * Delay2; // delay of square wave for synchronization with peaks of analogue wave
 volatile bool MinOrMaxWaveDuty;     // if duty-cycle is 0% or 100% only 1 half of wave is displayed
@@ -210,29 +265,29 @@ byte       NumWS = 5;       // Total number of different WaveShapes (6 counting 
 
 // WaveShape = 0 - Sine Wave variables
 // y = A*sin(B(x + C)) + D
-float      WS0a = 1.0; //A - Amplitude
-float      WS0b = 1.0; //B - "Wave Period". Does not change frequency. Only wave shape within set frequency. 0.5 doubles period and shortens wave higher number of bumps w/in single wavelength, 2 halfs period and elongates wave
-float      WS0c = 0.5; //C - Phase shift. O.5 shifts quarter wave to right and wave starts at maximum positive (e.g. cosine or "sine" wave), 0.0 = wave starts at "0" but only top half of wave
-float      WS0d = 0.5; //D - Vertical shift
-bool       WS0sh = 0;   //Sample and hold toggle (default is off = 0)
-float      WS0s = 0.1; //Sample and hold number of holding step fraction (default = 0.1, range is 0.05 to less than 0.5)
-int        WS0seg;     //Sample and Hold segment number (used by code)
-uint16_t   WS0volt;    //Sample and hold voltage (used by code)
+float      WS0a = 1.0;  //A - Amplitude
+float      WS0b = 1.0;  //B - "Wave Period". Does not change frequency. Only wave shape within set frequency. 0.5 doubles period and shortens wave higher number of bumps w/in single wavelength, 2 halfs period and elongates wave
+float      WS0c = 0.5;  //C - Phase shift. O.5 shifts quarter wave to right and wave starts at maximum positive (e.g. cosine or "sine" wave), 0.0 = wave starts at "0" but only top half of wave
+float      WS0d = 0.5;  //D - Vertical shift
+//bool       WS0h = 0;    //Sample and hold toggle (default is off = 0)
+int        WS0numS = 0; // number of steps
+int        WS0seg;      //Sample and Hold segment number (used by code)
+uint16_t   WS0volts;    //Sample and hold voltage (used by code)
 
 // WaveShape = 1 - Triangle Wave variables
 // y = Ax+B
-float      WS1a = 1.0; //A - Line slope Negative number is a decending line. 0.0 is horizontal line. Positive number is increasing line.
-float      WS1b = 0.5; //B - Y intercept or Vertical shift.
-bool       WS1sh = 0;   //Sample and hold toggle (default is off = 0)
-float      WS1s = 0.1; //Sample and hold number of holding step fraction (default = 0.1, range is 0.05 to less than 0.5)
-int        WS1seg;     //Sample and Hold segment number (used by code)
-uint16_t   WS1volt;    //Sample and hold voltage (used by code)
+float      WS1a = 1.0;  //A - Line slope Negative number is a decending line. 0.0 is horizontal line. Positive number is increasing line.
+float      WS1b = 0.5;  //B - Y intercept or Vertical shift.
+//bool       WS1h = 0;    //Sample and hold toggle (default is off = 0)
+int        WS1numS = 0; // number of steps
+int        WS1seg;      //Sample and Hold segment number (used by code)
+uint16_t   WS1volts;    //Sample and hold voltage (used by code)
 
 // WaveShape = 2 - Arbitrary Wave variables
-bool       WS2sh = 0;   //Sample and hold toggle (default is off = 0)
-float      WS2s = 0.1; //Sample and hold number of holding step fraction (default = 0.1, range is 0.05 to less than 0.5)
-int        WS2seg;     //Sample and Hold segment number (used by code)
-uint16_t   WS2volt;    //Sample and hold voltage (used by code)
+//bool       WS2h = 0;   //Sample and hold toggle (default is off = 0)
+float      WS2numS = 0.1; // number of steps
+int        WS2seg;        //Sample and Hold segment number (used by code)
+uint16_t   WS2volts;      //Sample and hold voltage (used by code)
 
 // WaveShape = 3 - Step Square wave variables (10 steps)
 //y = A0 if Index <= B0;
@@ -246,7 +301,7 @@ uint16_t   WS2volt;    //Sample and hold voltage (used by code)
 //y = A8 if Index > B7 && Index <= B8;
 //y = A9 else
 
-float      WS3a0 = 0.000; //A0
+float      WS3a0 = 0.00; //A0
 float      WS3a1 = 0.111; //A1
 float      WS3a2 = 0.222; //A2
 float      WS3a3 = 0.333; //A3
@@ -255,7 +310,7 @@ float      WS3a5 = 0.555; //A5
 float      WS3a6 = 0.666; //A6
 float      WS3a7 = 0.777; //A7
 float      WS3a8 = 0.888; //A8
-float      WS3a9 = 1.000; //A9
+float      WS3a9 = 0.999; //A9
 
 float      WS3b0 = 0.10; //B0
 float      WS3b1 = 0.20; //B1
@@ -272,26 +327,29 @@ int        Nextb;   //used in Wave 3 randomiser function
 long       RandNum; //used in Wave 3 randomiser function
 
 // WaveShape = 4 - Half Square Root function variables
-//y = A*(x + B)^0.5 + C
-float       WS4a = 50.0; //A
-float       WS4b = 0.0;  //B
-float       WS4c = 0.0;  //C (Fraction of Y max between 0.0 and 1.0)
-bool        WS4up = 1;   //Up portion of wave
-bool        WS4dn = 1;   //Down portion of wave second half
-bool        WS4sh = 0;    //Sample and hold toggle (default is off = 0)
-float       WS4s = 0.1;  //Sample and hold number of holding step fraction (default = 0.1, range is 0.05 to less than 0.5)
+//y = A*(x + B)^0.5 + C or y = -(A*(x + B)^0.5) + C
+float       WS4au = 50.0; //A
+float       WS4bu = 0.0;  //B
+float       WS4cu = 0.0;  //C (Fraction of Y max between 0.0 and 1.0)
+float       WS4ad = 50.0; //A
+float       WS4bd = 0.0;  //B
+float       WS4cd = 1.0;  //C (Fraction of Y max between 0.0 and 1.0)
+//bool        WS4up = 1;   //Up portion of wave
+//bool        WS4dn = 1;   //Down portion of wave second half
+//bool        WS4h = 0;    //Sample and hold toggle (default is off = 0)
+int         WS4numS = 0; // number of steps
 int         WS4seg;      //Sample and Hold segment number (used by code)
-uint16_t    WS4volt;     //Sample and hold voltage (used by code)
+uint16_t    WS4volts;    //Sample and hold voltage (used by code)
 
 //// WaveShape = 5 - Full Square Root function variables
 //y = A*(x + B)^0.5 + C
 float       WS5a = 50.0; //A
 float       WS5b = 0.0;  //B
 float       WS5c = 0.0;  //C (Fraction of Y max between 0.0 and 1.0)
-bool        WS5sh = 0;    //Sample and hold toggle (default is off = 0)
-float       WS5s = 0.1;  //Sample and hold number of holding step fraction (default = 0.1, range is 0.05 to less than 0.5)
+//bool        WS5h = 0;    //Sample and hold toggle (default is off = 0)
+int         WS5numS = 0; // number of steps
 int         WS5seg;      //Sample and Hold segment number (used by code)
-uint16_t    WS5volt;     //Sample and hold voltage (used by code)
+uint16_t    WS5volts;    //Sample and hold voltage (used by code)
 
 // Add more waveshape parameters below here
 
@@ -351,12 +409,18 @@ void setup()
     Serial.print(ActualDuty);
     Serial.println(" %\n");
   }
-  //needed for randomiser function
-  randomSeed(analogRead(0));
+   randomSeed(analogRead(0)); // needed for randomiser function
 }
 
 void CreateWaveFull() // WaveFull: (actually half a wave in full resolution) for low freq use; prevents 'sample' noise at very low audio freq's (sample-skipping used without DMA)
 {
+  int offset; // DC offset or vertical shift of wave (used in constrain function)
+  int32_t waveTemp; // needed only in wave 0 & 1 (so far)
+  if      (WaveShape == 0) offset = (NWAVEFULL / 2) + (int)((WS0d - 0.5) * NWAVEFULL);
+  else if (WaveShape == 1) offset = (NWAVEFULL / 2) + (int)((WS1b - 0.5) * NWAVEFULL);
+//  else if (WaveShape == 2) offset = 0.5 * NWAVEFULL; // (NWAVEFULL / 2) + (int)((WS2b - 0.5) * NWAVEFULL);
+  else if (WaveShape == 4) offset = (NWAVEFULL / 2) + (int)((WS4cd - 0.5) * NWAVEFULL); //  else if (WaveShape == 4) offset = (NWAVEFULL / 2) + (int)((WS4c - 0.5) * NWAVEFULL);
+  else if (WaveShape == 5) offset = (NWAVEFULL / 2) + (int)((WS5c - 0.5) * NWAVEFULL);
   if (WaveShape == 2) // Arbitrary wave creation - Create the wave from serial data
   {
     //    Serial.print("ArbitraryPointNumber = "); Serial.println(ArbitraryPointNumber);
@@ -398,9 +462,11 @@ void CreateWaveFull() // WaveFull: (actually half a wave in full resolution) for
               for (i = i; i < cl + waveStepPeak; i++)
               {
                 WaveFull[i] = ArbitraryWaveStep[point];
+                WaveFull2[i] = constrain(((WaveFull[i] - offset)) + offset, 0, NWAVEFULL - 1);
               }
             }
             WaveFull[i] = ArbitraryWaveStep[point]; // if step present, write 1st half of step
+            WaveFull2[i] = constrain(((WaveFull[i] - offset)) + offset, 0, NWAVEFULL - 1);
             i++; // move to next wave bit to write 2nd half of step
           }
           if (wavePeak > 0) // if sharp wave peak detected (& freq is high now), repeat peak value (create a plateau) to make it more visible:
@@ -409,11 +475,13 @@ void CreateWaveFull() // WaveFull: (actually half a wave in full resolution) for
             for (i = i; i < cl + wavePeak; i++)
             {
               WaveFull[i] = round(level);
+              WaveFull2[i] = constrain(((WaveFull[i] - offset)) + offset, 0, NWAVEFULL - 1);
             }
           }
         }
         WaveFull[i] = round(level);
         level += stepValue;
+        WaveFull2[i] = constrain(((WaveFull[i] - offset)) + offset, 0, NWAVEFULL - 1);
       }
     }
   }
@@ -421,111 +489,97 @@ void CreateWaveFull() // WaveFull: (actually half a wave in full resolution) for
   {
     for (int Index = 0; Index < NWAVEFULL; Index++) // create the individual samples for the wave - half cycle, 4096 steps, 12 bit range: 4095 - 0
     {
-      if (WaveShape == 0) // Sine wave
+      if (WaveShape == 0) // Sine wave - 1st wave half saved into full wave table in reverse order - 2nd wave half saved into 2nd full wave table, inverted around it's centre (1st half is read in reverse order, correcting it)
       {
         // y = A*sin(B(x + C)) + D
-        WaveFull[Index] = (uint16_t) ((((WS0d * 2) + WS0a * sin((((2.0 * PI) / (WS0b * NWAVEFULL)) / 2) * (Index + (WS0c * NWAVEFULL)))) * 4095.0) / 2);
+        waveTemp = (int32_t) ((((WS0d * 2) + WS0a * sin((((2.0 * PI) / (WS0b * NWAVEFULL)) / 2) * (Index + (WS0c * NWAVEFULL)))) * 4095.0) / 2); // save temporarily into a 32 bit signed int to allow large minus calculations. Final wave table must be unsigned to allow table to rollover and cycle etc in Exact (Freq) Mode
         // Sample and Hold function (i.e. sample rate reduction)
-        if (WS0sh == 1)  
+        if (WS0numS > 0)  
         {
-          if (Index == 0) // Initialise
+          if (Index == 0) // Initialise at start of wave
           {
-            WS0volt = WaveFull[Index];
-            WS0seg = 1; //Segment number
+            WS0seg = WS0numS; // Segment number = number of steps, because the wave starts from the top and counts down
+            WS0volts = waveTemp; // save sample at start
           }
-          else if (Index == (int) (WS0seg * (WS0s * (NWAVEFULL - 1)))) // Sample
+          if (NWAVEFULL - 1 - Index == (int) (WS0seg * (NWAVEFULL - 1) / WS0numS)) // if time to take a sample
           {
-            WS0seg = WS0seg + 1;
-            WS0volt = WaveFull[Index];
+            WS0volts = waveTemp; // save sample
+            WS0seg--; // count down
           }
-          else // Hold
-          {
-             WaveFull[Index] = WS0volt;
-          }
-        }  
+          else waveTemp = WS0volts; // Hold
+        } 
+        WaveFull[NWAVEFULL - 1 - Index] = constrain(waveTemp, 0, NWAVEFULL - 1);                   // save 1st wave half into full wave table in reverse order, constrained between min & max values (1st half is read in reverse order, correcting it)
+        WaveFull2[Index]                = constrain(offset - waveTemp + offset, 0, NWAVEFULL - 1); // save 2nd wave half into 2nd full wave table, inverted around it's centre, constrained between min & max values
       }
-      else if (WaveShape == 1)  // Triangle wave
+      else if (WaveShape == 1)  // Triangle wave - 1st wave half saved into full wave table in reverse order - 2nd wave half saved into 2nd full wave table, inverted around it's centre
       {
         // y = A/2+B-A*x // y = Ax+B
-        WaveFull[Index] = ((WS1b * (NWAVEFULL - 1)) + (WS1a * (NWAVEFULL / 2))) - (WS1a * Index); // NWAVEFULL - 1 - Index;
+        waveTemp = (int32_t) ((WS1b * (NWAVEFULL - 1)) + (WS1a * (NWAVEFULL / 2))) - (WS1a * Index); // NWAVEFULL - 1 - Index; // save temporarily into a 32 bit signed int to allow large minus calculations. Final wave table must be unsigned to allow table to rollover and cycle etc in Exact (Freq) Mode
         // Sample and Hold function (i.e. sample rate reduction)
-        if (WS1sh == 1)  
+        if (WS1numS > 0)  
         {
-          if (Index == 0) // Initialise
+          if (Index == 0) // Initialise at start of wave
           {
-            WS1volt = WaveFull[Index];
-            WS1seg = 1; //Segment number
+            WS1seg = WS1numS; // Segment number = number of steps, because the wave starts from the top and counts down
+            WS1volts = waveTemp;
           }
-          else if (Index == (int) (WS1seg * (WS1s * (NWAVEFULL - 1)))) // Sample
+          if (NWAVEFULL - 1 - Index == (int) (WS1seg * (NWAVEFULL - 1) / WS1numS)) // if time to take a sample
           {
-            WS1seg = WS1seg + 1;
-            WS1volt = WaveFull[Index];
+            WS1volts = waveTemp; // save sample
+            WS1seg--; // count down
           }
-          else // Hold
-          {
-             WaveFull[Index] = WS1volt;
-          }
-        }     
+          else waveTemp = WS1volts; // hold until next sample time
+        }
+        WaveFull[NWAVEFULL - 1 - Index] = constrain(waveTemp, 0, NWAVEFULL - 1);                   // save 1st wave half into full wave table in reverse order, constrained between min & max values (1st half is read in reverse order, correcting it)
+        WaveFull2[Index]                = constrain(offset - waveTemp + offset, 0, NWAVEFULL - 1); // save 2nd wave half into 2nd full wave table, inverted around it's centre, constrained between min & max values
       }
-      else if (WaveShape == 3)  // Staircase "wave" (maximum 10 steps)
+      else if (WaveShape == 3)  // Staircase "wave" (maximum 10 steps) - 1st wave half saved into full wave table - 2nd wave half saved into 2nd full wave table, neither reversed or inverted
       {
-        //y = A0 if Index <= B0;
-        //y = A1 if Index > B0 && Index <= B1;
-        //y = A2 if Index > B1 && Index <= B2;
-        //y = A3 if Index > B2 && Index <= B3;
-        //y = A4 if Index > B3 && Index <= B4;
-        //y = A5 if Index > B4 && Index <= B5;
-        //y = A6 if Index > B5 && Index <= B6;
-        //y = A7 if Index > B6 && Index <= B7;
-        //y = A8 if Index > B7 && Index <= B8;
-        //y = A9 else
-
-        if ((WS3b0 != 0.0) && (Index >= 0) && (Index < (WS3b0 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a0 * (NWAVEFULL - 1));
-        else if ((WS3b1 != 0.0) && (Index >= (WS3b0 * (NWAVEFULL - 1))) && (Index < (WS3b1 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a1 * (NWAVEFULL - 1));
-        else if ((WS3b2 != 0.0) && (Index >= (WS3b1 * (NWAVEFULL - 1))) && (Index < (WS3b2 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a2 * (NWAVEFULL - 1));
-        else if ((WS3b3 != 0.0) && (Index >= (WS3b2 * (NWAVEFULL - 1))) && (Index < (WS3b3 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a3 * (NWAVEFULL - 1));
-        else if ((WS3b4 != 0.0) && (Index >= (WS3b3 * (NWAVEFULL - 1))) && (Index < (WS3b4 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a4 * (NWAVEFULL - 1));
-        else if ((WS3b5 != 0.0) && (Index >= (WS3b4 * (NWAVEFULL - 1))) && (Index < (WS3b5 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a5 * (NWAVEFULL - 1));
-        else if ((WS3b6 != 0.0) && (Index >= (WS3b5 * (NWAVEFULL - 1))) && (Index < (WS3b6 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a6 * (NWAVEFULL - 1));
-        else if ((WS3b7 != 0.0) && (Index >= (WS3b6 * (NWAVEFULL - 1))) && (Index < (WS3b7 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a7 * (NWAVEFULL - 1));
-        else if ((WS3b8 != 0.0) && (Index >= (WS3b7 * (NWAVEFULL - 1))) && (Index < (WS3b8 * (NWAVEFULL - 1)))) WaveFull[Index] = (uint16_t) (WS3a8 * (NWAVEFULL - 1));
-        else WaveFull[Index] = (uint16_t) (WS3a9 * (NWAVEFULL - 1));
+        if      (WS3b8 != 0.0 && (Index >= WS3b8 * (NWAVEFULL - 1))) WaveFull[Index] = (uint16_t) (WS3a9 * (NWAVEFULL - 1));
+        else if (WS3b7 != 0.0 && (Index >= WS3b7 * (NWAVEFULL - 1))) WaveFull[Index] = (uint16_t) (WS3a8 * (NWAVEFULL - 1));
+        else if (WS3b6 != 0.0 && (Index >= WS3b6 * (NWAVEFULL - 1))) WaveFull[Index] = (uint16_t) (WS3a7 * (NWAVEFULL - 1));
+        else if (WS3b5 != 0.0 && (Index >= WS3b5 * (NWAVEFULL - 1))) WaveFull[Index] = (uint16_t) (WS3a6 * (NWAVEFULL - 1));
+        else if (WS3b4 != 0.0 && (Index >= WS3b4 * (NWAVEFULL - 1))) WaveFull[Index] = (uint16_t) (WS3a5 * (NWAVEFULL - 1));
+        else if (WS3b3 != 0.0 && (Index >= WS3b3 * (NWAVEFULL - 1))) WaveFull[Index] = (uint16_t) (WS3a4 * (NWAVEFULL - 1));
+        else if (WS3b2 != 0.0 && (Index >= WS3b2 * (NWAVEFULL - 1))) WaveFull[Index] = (uint16_t) (WS3a3 * (NWAVEFULL - 1));
+        else if (WS3b1 != 0.0 && (Index >= WS3b1 * (NWAVEFULL - 1))) WaveFull[Index] = (uint16_t) (WS3a2 * (NWAVEFULL - 1));
+        else if (WS3b0 != 0.0 && (Index >= WS3b0 * (NWAVEFULL - 1))) WaveFull[Index] = (uint16_t) (WS3a1 * (NWAVEFULL - 1));
+        else                                                         WaveFull[Index] = (uint16_t) (WS3a0 * (NWAVEFULL - 1));
+        WaveFull[Index]  = constrain(WaveFull[Index], 0, NWAVEFULL - 1); // keep wave clamped between maximum and minium values
+        WaveFull2[Index] = constrain(WaveFull[Index], 0, NWAVEFULL - 1); // 2nd wave half always read from here, (no DC offset setting)
       }
-      else if (WaveShape == 4) // Half Square Root Function "wave"
+      else if (WaveShape == 4) // Half Square Root Function "wave" - 1st wave half saved into full wave table - 2nd wave half saved into 2nd full wave table, neither reversed or inverted (1st half will be read in reverse order)
       {
-        //y = A*(x + B)^0.5 + C
-        if ((Index + WS4b) < 0) WaveFull[Index] = 0; //Square Root of a negative number is imaginary therefore set to zero
-        else
+        if ((Index >= 0) && (Index < ((NWAVEFULL - 1) / 2))) //y = A*(x + B)^0.5 + C
         {
-          if ((Index >= 0) && (Index < ((NWAVEFULL - 1) / 2)))
-          {
-            if (WS4up == 1) WaveFull[Index] = (uint16_t) ((WS4a * pow((Index + WS4b), 0.5)) + (WS4c * NWAVEFULL - 1));
-            else WaveFull[Index] = 0;
-          }
-          else
-          {
-            if (WS4dn == 1) WaveFull[Index] = (uint16_t) (-(WS4a * pow((Index + WS4b), 0.5) + (WS4c * NWAVEFULL - 1)));
-            else WaveFull[Index] = 0;
-          }
+            if ((Index + WS4bu) < 0 ) WaveFull[Index] = 0; // Square Root of a negative number is imaginary therefore set to zero
+            else WaveFull[Index] = (uint16_t) ((WS4au * pow((Index + WS4bu), 0.5)) + (WS4cu * NWAVEFULL - 1));
+        }
+        else //y = -(A*(x + B)^0.5) + C
+        {
+            if ((Index + WS4bd) < 0 ) WaveFull[Index] = 0; // Square Root of a negative number is imaginary therefore set to zero
+            else WaveFull[Index] = (uint16_t) (-(WS4ad * pow((Index + WS4bd), 0.5)) + (WS4cd * NWAVEFULL - 1));
         }
         // Sample and Hold function (i.e. sample rate reduction)
-        if (WS4sh == 1)  
+        if (WS4numS > 0)  
         {
           if (Index == 0) // Initialise
           {
-            WS4volt = WaveFull[Index];
+            WS4volts = WaveFull[Index];
             WS4seg = 1; //Segment number
           }
-          else if (Index == (int) (WS4seg * (WS4s * (NWAVEFULL - 1)))) // Sample
+          else if (Index == (int) (WS4seg * (NWAVEFULL - 1) / WS4numS)) // Sample
           {
-            WS4seg = WS4seg + 1;
-            WS4volt = WaveFull[Index];
+            WS4seg++;
+            WS4volts = WaveFull[Index];
           }
           else // Hold
           {
-             WaveFull[Index] = WS4volt;
+             WaveFull[Index] = WS4volts;
           }
         } 
+        WaveFull[Index]  = constrain(WaveFull[Index], 0, (NWAVEFULL - 1)); // keep wave clamped between min & max values
+        WaveFull2[Index] = constrain(((WaveFull[Index] - offset)) + offset, 0, NWAVEFULL - 1); // 2nd wave half always read from here
       }
       else if (WaveShape == 5)  // Full Square Root Function "wave"
       {
@@ -536,144 +590,138 @@ void CreateWaveFull() // WaveFull: (actually half a wave in full resolution) for
           WaveFull[Index] = (uint16_t) ((WS5a * pow((Index + WS5b), 0.5)) + (WS5c * NWAVEFULL - 1));
         }
         // Sample and Hold function (i.e. sample rate reduction)
-        if (WS5sh == 1)  
+        if (WS5numS > 0)  
         {
           if (Index == 0) // Initialise
           {
-            WS5volt = WaveFull[Index];
+            WS5volts = WaveFull[Index];
             WS5seg = 1; //Segment number
           }
-          else if (Index == (int) (WS5seg * (WS5s * (NWAVEFULL - 1)))) // Sample
+          else if (Index == (int) (WS5seg * ((NWAVEFULL) / (WS5numS + 0.5)))) // Sample
           {
-            WS5seg = WS5seg + 1;
-            WS5volt = WaveFull[Index];
+            WS5seg++;
+            WS5volts = WaveFull[Index];
           }
           else // Hold
           {
-             WaveFull[Index] = WS5volt;
+             WaveFull[Index] = WS5volts;
           }
         } 
-      }
-      WaveFull[Index] = constrain(WaveFull[Index], 0, (NWAVEFULL - 1)); // keep wave clamped between maximum and minium values
-      //Serial.print(Index); Serial.print(" WF = "); Serial.println(WaveFull[Index]);
+        WaveFull[Index]  = constrain(WaveFull[Index], 0, (NWAVEFULL - 1)); // keep wave clamped between min & max values
+        WaveFull2[Index] = constrain(((WaveFull[Index] - offset)) + offset, 0, NWAVEFULL - 1); // 2nd wave half always read from here
+      }      
+      // Serial.print(Index); Serial.print(" WF = "); Serial.println(waveTemp);
     }
   }
 }
 
 void CreateWaveTable() // WaveTable: a smaller half wave for higher freq use; faster to copy from smaller table into NewWave (below) [It takes 50% longer to copy from full wave above!]
 {
+  int offset; // DC offset or vertical shift of wave (used in constrain function)
+  int32_t waveTemp; // needed only in wave 0 & 1 (so far)
+  if      (WaveShape == 0) offset = (NWAVEFULL / 2) + (int)((WS0d - 0.5) * NWAVEFULL);
+  else if (WaveShape == 1) offset = (NWAVEFULL / 2) + (int)((WS1b - 0.5) * NWAVEFULL);
+//  else if (WaveShape == 2) offset = 0.5 * NWAVEFULL; // (NWAVEFULL / 2) + (int)((WS2b - 0.5) * NWAVEFULL);
+  else if (WaveShape == 4) offset = (NWAVEFULL / 2) + (int)((WS4cd - 0.5) * NWAVEFULL); //  else if (WaveShape == 4) offset = (NWAVEFULL / 2) + (int)((WS4c - 0.5) * NWAVEFULL);
+  else if (WaveShape == 5) offset = (NWAVEFULL / 2) + (int)((WS5c - 0.5) * NWAVEFULL);
   for (int Index = 0; Index < NWAVETABLE; Index++) // create the individual samples for the wave table - half cycle, 160 steps, 12 bit range: 4095 - 0
   {
-    if (WaveShape == 0) // Sine wave
-    {
-      // y = A*sin(B*(x + C)) + D
-      WaveTable[Index] = (uint16_t) ((((WS0d * 2) + WS0a * sin((((2.0 * PI) / (WS0b * NWAVETABLE)) / 2) * (Index + (WS0c * NWAVETABLE)))) * 4095.0) / 2);
-      // Sample and Hold function (i.e. sample rate reduction)
-      if (WS0sh == 1)  
+  if (WaveShape == 0) // Sine wave
+  {
+    // y = A*sin(B*(x + C)) + D
+    waveTemp = (int32_t) ((((WS0d * 2) + WS0a * sin((((2.0 * PI) / (WS0b * NWAVETABLE)) / 2) * (Index + (WS0c * NWAVETABLE)))) * 4095.0) / 2);
+    // Sample and Hold function (i.e. sample rate reduction)
+    if (WS0numS > 0)  
       {
-        if (Index == 0) // Initialise
+        if (Index == 0) // Initialise at start of wave
         {
-          WS0volt = WaveTable[Index];
-          WS0seg = 1; //Segment number
+          WS0seg = WS0numS; // Segment number = number of steps, because the wave starts from the top and counts down
+          WS0volts = waveTemp; // save sample at start
         }
-        else if (Index == (int) (WS0seg * (WS0s * (NWAVETABLE - 1)))) // Sample
+        if (NWAVETABLE - 1 - Index == (int) (WS0seg * (NWAVETABLE - 1) / WS0numS)) // if time to take a sample
         {
-          WS0seg = WS0seg + 1;
-          WS0volt = WaveTable[Index];
+          WS0volts = waveTemp; // save sample
+          WS0seg--; // count down
         }
-        else // Hold
-        {
-           WaveTable[Index] = WS0volt;
-        }
+        else waveTemp = WS0volts; // Hold
       } 
+      WaveTable[NWAVETABLE - 1 - Index] = constrain(waveTemp, 0, NWAVEFULL - 1);                   // save 1st wave half into wave table in reverse order, constrained between min & max values (1st half is read in reverse order, correcting it)
+      WaveTable2[Index] = constrain(offset - waveTemp + offset, 0, NWAVEFULL - 1); // 2nd wave half always read from here
     }
     else if (WaveShape == 1) // Triangle wave
     {
       // y = A/2+B-A*x
-      WaveTable[Index] = (uint16_t) (((1.0 / (WS1b * (NWAVEFULL - 1))) + (WS1a * (NWAVEFULL / 2))) - (WS1a * Index) * 4095.0); // (((1.0 / (NWAVETABLE - 1)) * (NWAVETABLE - 1 - Index)) * 4095.0);
+      waveTemp = (int32_t) (((WS1b * (NWAVEFULL - 1)) + (WS1a * (NWAVEFULL / 2))) - round(WS1a * Index * 25.755)); // (((1.0 / (NWAVETABLE - 1)) * (NWAVETABLE - 1 - Index)) * 4095.0);
       // Sample and Hold function (i.e. sample rate reduction)
-      if (WS1sh == 1)  
+      if (WS1numS > 0)
       {
-        if (Index == 0) // Initialise
+        if (Index == 0) // Initialise at start of wave
         {
-          WS1volt = WaveTable[Index];
-          WS1seg = 1; //Segment number
+          WS1seg = WS1numS; // Segment number = number of steps, because the wave starts from the top and counts down
+          WS1volts = waveTemp;
         }
-        else if (Index == (int) (WS1seg * (WS1s * (NWAVETABLE - 1)))) // Sample
+        if (NWAVETABLE - 1 - Index == (int) (WS1seg * (NWAVETABLE - 1) / WS1numS)) // if time to take a sample
         {
-          WS1seg = WS1seg + 1;
-          WS1volt = WaveTable[Index];
+          WS1volts = waveTemp; // save sample
+          WS1seg--; // count down
         }
-        else // Hold
-        {
-           WaveTable[Index] = WS1volt;
-        }
+        else waveTemp = WS1volts; // hold until next sample time
       }
+      WaveTable[NWAVETABLE - 1 - Index] = constrain(waveTemp, 0, NWAVEFULL - 1);                   // save 1st wave half into wave table in reverse order, constrained between min & max values (1st half is read in reverse order, correcting it)
+      WaveTable2[Index] = constrain(offset - waveTemp + offset, 0, NWAVEFULL - 1); // 2nd wave half always read from here
     }
     else if (WaveShape == 2) // Arbitrary wave
     {
-      WaveTable[Index] = (uint16_t) WaveFull[round(Index * 25.6)]; // Arbitrary wave
+      WaveTable[Index]  = (uint16_t) WaveFull[round(Index * 25.755)]; // Arbitrary wave 1st wave half
+      WaveTable2[Index] = (uint16_t) WaveFull[round(Index * 25.755)]; // Arbitrary wave 2nd wave half
     }
     else if (WaveShape == 3)  // Staircase "wave" (maximum 10 steps)
     {
-      //y = A0 if Index <= B0;
-      //y = A1 if Index > B0 && Index <= B1;
-      //y = A2 if Index > B1 && Index <= B2;
-      //y = A3 if Index > B2 && Index <= B3;
-      //y = A4 if Index > B3 && Index <= B4;
-      //y = A5 if Index > B4 && Index <= B5;
-      //y = A6 if Index > B5 && Index <= B6;
-      //y = A7 if Index > B6 && Index <= B7;
-      //y = A8 if Index > B7 && Index <= B8;
-      //y = A9 else
-
-      if ((WS3b0 != 0.0) && (Index >= 0) && (Index < (WS3b0 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a0 * (NWAVEFULL - 1));
-      else if ((WS3b1 != 0.0) && (Index >= (WS3b0 * (NWAVETABLE - 1))) && (Index < (WS3b1 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a1 * (NWAVEFULL - 1));
-      else if ((WS3b2 != 0.0) && (Index >= (WS3b1 * (NWAVETABLE - 1))) && (Index < (WS3b2 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a2 * (NWAVEFULL - 1));
-      else if ((WS3b3 != 0.0) && (Index >= (WS3b2 * (NWAVETABLE - 1))) && (Index < (WS3b3 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a3 * (NWAVEFULL - 1));
-      else if ((WS3b4 != 0.0) && (Index >= (WS3b3 * (NWAVETABLE - 1))) && (Index < (WS3b4 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a4 * (NWAVEFULL - 1));
-      else if ((WS3b5 != 0.0) && (Index >= (WS3b4 * (NWAVETABLE - 1))) && (Index < (WS3b5 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a5 * (NWAVEFULL - 1));
-      else if ((WS3b6 != 0.0) && (Index >= (WS3b5 * (NWAVETABLE - 1))) && (Index < (WS3b6 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a6 * (NWAVEFULL - 1));
-      else if ((WS3b7 != 0.0) && (Index >= (WS3b6 * (NWAVETABLE - 1))) && (Index < (WS3b7 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a7 * (NWAVEFULL - 1));
-      else if ((WS3b8 != 0.0) && (Index >= (WS3b7 * (NWAVETABLE - 1))) && (Index < (WS3b8 * (NWAVETABLE - 1)))) WaveTable[Index] = (uint16_t) (WS3a8 * (NWAVEFULL - 1));
-      else WaveTable[Index] = (uint16_t) (WS3a9 * (NWAVEFULL - 1));
+      if      (WS3b8 != 0.0 && (Index >= WS3b8 * (NWAVETABLE - 1))) WaveTable[Index] = (uint16_t) (WS3a9 * (NWAVEFULL - 1));
+      else if (WS3b7 != 0.0 && (Index >= WS3b7 * (NWAVETABLE - 1))) WaveTable[Index] = (uint16_t) (WS3a8 * (NWAVEFULL - 1));
+      else if (WS3b6 != 0.0 && (Index >= WS3b6 * (NWAVETABLE - 1))) WaveTable[Index] = (uint16_t) (WS3a7 * (NWAVEFULL - 1));
+      else if (WS3b5 != 0.0 && (Index >= WS3b5 * (NWAVETABLE - 1))) WaveTable[Index] = (uint16_t) (WS3a6 * (NWAVEFULL - 1));
+      else if (WS3b4 != 0.0 && (Index >= WS3b4 * (NWAVETABLE - 1))) WaveTable[Index] = (uint16_t) (WS3a5 * (NWAVEFULL - 1));
+      else if (WS3b3 != 0.0 && (Index >= WS3b3 * (NWAVETABLE - 1))) WaveTable[Index] = (uint16_t) (WS3a4 * (NWAVEFULL - 1));
+      else if (WS3b2 != 0.0 && (Index >= WS3b2 * (NWAVETABLE - 1))) WaveTable[Index] = (uint16_t) (WS3a3 * (NWAVEFULL - 1));
+      else if (WS3b1 != 0.0 && (Index >= WS3b1 * (NWAVETABLE - 1))) WaveTable[Index] = (uint16_t) (WS3a2 * (NWAVEFULL - 1));
+      else if (WS3b0 != 0.0 && (Index >= WS3b0 * (NWAVETABLE - 1))) WaveTable[Index] = (uint16_t) (WS3a1 * (NWAVEFULL - 1));
+      else                                                          WaveTable[Index] = (uint16_t) (WS3a0 * (NWAVEFULL - 1));
+      WaveTable[Index] = constrain(WaveTable[Index], 0, (NWAVEFULL - 1)); // keep wave clamped between maximum and minium values
+      WaveTable2[Index] = constrain(((WaveTable[Index] - offset)) + offset, 0, NWAVEFULL - 1); // 2nd wave half always read from here
     }
     else if (WaveShape == 4) // Half Square Root Function "wave"
     {
-      //y = A*(x + B)^0.5 + C
-      //y = -(A*(x + B)^0.5 + C)
-      if ((Index + WS4b) < 0) WaveTable[Index] = 0; // Square Root of a negative number is imaginary therefore set to zero
-      else
+      if ((Index >= 0) && (Index < ((NWAVETABLE - 1) / 2))) //y = A*(x + B)^0.5 + C
       {
-        if ((Index >= 0) && (Index < ((NWAVETABLE - 1) / 2)))
-        {
-          if (WS4up == 1) WaveTable[Index] = (uint16_t) ((WS4a * pow((Index + WS4b), 0.5)) + (WS4c * NWAVETABLE - 1));
-          else WaveTable[Index] = 0;
-        }
-        else
-        {
-          if (WS4dn == 1) WaveTable[Index] = (uint16_t) (-(WS4a * pow((Index + WS4b), 0.5) + (WS4c * NWAVETABLE - 1)));
-          else WaveTable[Index] = 0;
-        }
+        if ((Index + WS4bu) < 0) WaveTable[Index] = 0; // Square Root of a negative number is imaginary therefore set to zero
+        else WaveTable[Index] = (uint16_t) ((WS4au * pow((Index + WS4bu) * 25.755, 0.5)) + (WS4cu * NWAVETABLE - 1)); // 25.755 = 4095 / 159
+      }
+      else //y = -(A*(x + B)^0.5) + C
+      {
+        if ((Index + WS4bd) < 0) WaveTable[Index] = 0; // Square Root of a negative number is imaginary therefore set to zero
+        else WaveTable[Index] = (uint16_t) (-(WS4ad * pow((Index + WS4bd) * 25.755, 0.5)) + (WS4cd * NWAVETABLE - 1));
       }
       // Sample and Hold function (i.e. sample rate reduction)
-      if (WS4sh == 1)  
+      if (WS4numS > 0)  
       {
         if (Index == 0) // Initialise
         {
-          WS4volt = WaveTable[Index];
+          WS4volts = WaveTable[Index];
           WS4seg = 1; //Segment number
         }
-        else if (Index == (int) (WS4seg * (WS4s * (NWAVETABLE - 1)))) // Sample
+        else if (Index == (int) (WS4seg * (NWAVETABLE - 1) / WS4numS)) // Sample
         {
-          WS4seg = WS4seg + 1;
-          WS4volt = WaveTable[Index];
+          WS4seg++;
+          WS4volts = WaveTable[Index];
         }
         else // Hold
         {
-           WaveTable[Index] = WS4volt;
+           WaveTable[Index] = WS4volts;
         }
       }
+      WaveTable[Index] = constrain(WaveTable[Index], 0, (NWAVEFULL - 1)); // keep wave clamped between maximum and minium values
+      WaveTable2[Index] = constrain(((WaveTable[Index] - offset)) + offset, 0, NWAVEFULL - 1); // 2nd wave half always read from here
     }
     else if (WaveShape == 5) // Full Square Root function "wave"
     {
@@ -681,29 +729,30 @@ void CreateWaveTable() // WaveTable: a smaller half wave for higher freq use; fa
       if ((Index + WS5b) < 0) WaveTable[Index] = 0; // Square Root of a negative number is imaginary therefore set to zero
       else
       {
-        WaveTable[Index] = (uint16_t) ((WS5a * pow((Index + WS5b), 0.5)) + (WS5c * NWAVETABLE - 1));
+        WaveTable[Index] = (uint16_t) ((WS5a * pow((Index + WS5b) * 25.755, 0.5)) + (WS5c * NWAVETABLE - 1));
       }
       // Sample and Hold function (i.e. sample rate reduction)
-      if (WS5sh == 1)  
+      if (WS5numS > 0)  
       {
         if (Index == 0) // Initialise
         {
-          WS5volt = WaveTable[Index];
+          WS5volts = WaveTable[Index];
           WS5seg = 1; //Segment number
         }
-        else if (Index == (int) (WS5seg * (WS5s * (NWAVETABLE - 1)))) // Sample
+        else if (Index == (int) (WS5seg * ((NWAVETABLE) / (WS5numS + 0.5)))) // Sample
         {
-          WS5seg = WS5seg + 1;
-          WS5volt = WaveTable[Index];
+          WS5seg++;
+          WS5volts = WaveTable[Index];
         }
         else // Hold
         {
-           WaveTable[Index] = WS5volt;
+           WaveTable[Index] = WS5volts;
         }
       }
+      WaveTable[Index] = constrain(WaveTable[Index], 0, (NWAVEFULL - 1)); // keep wave clamped between maximum and minium values
+      WaveTable2[Index] = constrain(((WaveTable[Index] - offset)) + offset, 0, NWAVEFULL - 1); // 2nd wave half always read from here
     }
-    WaveTable[Index] = constrain(WaveTable[Index], 0, (NWAVEFULL - 1)); // keep wave clamped between maximum and minium values
-    //    Serial.print(Index); Serial.print(" WT = "); Serial.println(WaveTable[Index]);
+    // Serial.print(Index); Serial.print(" WT = "); Serial.println(WaveTable[Index]);
   }
 }
 
@@ -754,10 +803,10 @@ void Create2ndHalfNewWave(int fm, float inc1)
   for (int Index = 0; Index < Duty[1][fm]; Index++) // 2nd half of cycle
   { // separate files used (Wave0 - 3) instead of arrays to reduce memory useage: [since Wave3 is much smaller than Wave0]
     if ((TargetWaveDuty > 0 && TargetWaveDuty < 100) || Index != 0) x = min(NWAVETABLE - 1, x + inc1); // if displaying one half of wave only start from full amplitude
-    if      (fm == 0) Wave0[1][Index] = WaveTable[round(x)];
-    else if (fm == 1) Wave1[1][Index] = WaveTable[round(x)];
-    else if (fm == 2) Wave2[1][Index] = WaveTable[round(x)];
-    else if (fm == 3) Wave3[1][Index] = WaveTable[round(x)];
+    if      (fm == 0) Wave0[1][Index] = WaveTable2[round(x)];
+    else if (fm == 1) Wave1[1][Index] = WaveTable2[round(x)];
+    else if (fm == 2) Wave2[1][Index] = WaveTable2[round(x)];
+    else if (fm == 3) Wave3[1][Index] = WaveTable2[round(x)];
     //    if      (fm == 3) {Serial.print(Index); Serial.print("b = "); Serial.print(round(x)); Serial.print(" val = "); Serial.println(Wave3[1][Index]);}
   }
 }
@@ -1003,7 +1052,7 @@ void loop()
     UserInput = Serial.parseFloat(SKIP_NONE); // read float related characters until other character appears, then stop.
     if (Serial.peek() == 'x') maxNum = 4; // look ahead to see what the next character will be - if it's 'x' maxNum is 4, otherwise it's 1
     Serial.readBytesUntil('\n', UserChars, maxNum); // read all characters (including numbers) after initial (float) numbers up to maxNum of characters (only 1 character if next character is not 'x')
-    if (UserChars[0] == 'x') {Serial.print("   You sent: "); Serial.print(UserInput); Serial.print(UserChars[0]); Serial.print(UserChars[1]); Serial.print(UserChars[2]); Serial.println(UserChars[3]);}
+    if (UserChars[0] == 'x') {Serial.print("   You sent: "); Serial.print(UserInput); Serial.print(UserChars[0]); Serial.print(UserChars[1]); Serial.print(UserChars[2]); Serial.println(UserChars[3]);} // Deliberately no new line here
     // else Serial.print("   UserChars[0] = "); Serial.println(UserChars[0]);
     if (a == 1 || UserChars[0] == ',' || UserChars[0] == '-') // If currently receiving arbitrary wave. UserChars[0] will be ',' or '-' if starting to add more points to an existing arbitrary wave.
     {
@@ -1110,36 +1159,25 @@ void loop()
             Serial.print("   Wave Shape 0 D - Sine Vertical Shift changed to: ");
             Serial.println(UserInput);
           }
-          else if (UserChars[2] == 'h') // if received x0h - Sample and Hold toggle
-          {
-            if ((UserInput == 1) || (UserInput == 0))
-            {
-              WS0sh = UserInput;
-              Serial.print("   Sample and Hold toggle on/off changed to: ");
-              Serial.println(UserInput);    
-            }
-            else Serial.println("   Not valid input for x0h. Must enter either 1 or 0 only (e.g. 1x0h).\n");    
-          }
+//          else if (UserChars[2] == 'h') // if received x0h - Sample and Hold toggle
+//          {
+//            if ((UserInput == 1) || (UserInput == 0))
+//            {
+//              WS0h = UserInput;
+//              Serial.print("   Sample and Hold toggle on/off changed to: ");
+//              Serial.println(UserInput);    
+//            }
+//            else Serial.println("   Not valid input for x0h. Must enter either 1 or 0 only (e.g. 1x0h).\n");    
+//          }
           else if (UserChars[2] == 's') // if received x0s - Sample and Hold fraction
           {
-             if ((UserInput >= 0.05) && (UserInput < 0.5))
-             {
-                WS0s = UserInput;
-                Serial.print("   Sample and Hold fraction changed to: ");
-                Serial.println(UserInput);
-             }
-             else Serial.println("   Not valid input for x0s. Must enter value between 0.05 and less than 0.5 only (e.g. 0.2x0s).\n");
-          }
-          else if (UserChars[2] == 'r')   //if recieved x0r
-          {
-            //randomise all variables
-            // random number set for each variable acceptable range  //NEEDS TWEAKING
-            WS0a = random(-500,501)/100.0; // This is fixed from -5 to 5
-            WS0b = random(-500,501)/100.0; // This is fixed from -5 to 5
-            WS0c = random(-500,501)/100.0; // This is fixed from -5 to 5
-            WS0d = random(101)/70.0; //this is fixed from 0 to about 1.43
-            Serial.println("   Wave Shape 0 - Sine Wave all equation parameters randomised."); 
-            Serial.println("   Note this may result in wave off scale hi/low (i.e. flat line). Tweak variables or re-randomise.");        
+//             if (UserInput >= 2) // if ((UserInput >= 0.05) && (UserInput < 0.5))
+//             {
+                WS0numS = ceil(abs(UserInput));
+                Serial.print("   Number of steps changed to: "); // Serial.print("   Sample and Hold fraction changed to: ");
+                Serial.println(ceil(abs(UserInput)));
+//             }
+//             else if (UserInput != 0) Serial.println("   Not valid input for x0s. Must enter value between 0.05 and less than 0.5 only (e.g. 0.2x0s).\n");
           }     
           else // if received x0 with no more char's after it - Wave Shape 0 variables:
           {
@@ -1149,12 +1187,11 @@ void loop()
             Serial.println(  "   x0b = B - Waveshape Period (default = 1.0)");
             Serial.println(  "   x0c = C - Phase Shift (default = 0.5)");
             Serial.println(  "   x0d = D - Vertical Offset (default = 0.5)");
-            Serial.println(  "   x0r     - To randomise all equation variables (i.e x0a to x0d).");
-            Serial.println(  "   x0h     - Toggle Sample and Hold on/off (default = 0)");
-            Serial.println(  "   x0s     - Sample and Hold fractional length (default = 0.1, range 0.05 to less than 0.5)\n");
+            //Serial.println(  "   x0h     - Toggle Sample and Hold on/off (default = 0)");
+            Serial.println(  "   x0s     - Sample and Hold number of steps (default = 0 which is Sample and Hold is off)\n");
             Serial.println(  "             Current values: ");
             Serial.print(    "   A = "); Serial.print(WS0a); Serial.print(", B = "); Serial.print(WS0b); Serial.print(", C = "); Serial.print(WS0c); Serial.print(", D = "); Serial.println(WS0d);
-            Serial.print(    "   Sample and Hold: x0h = "); Serial.print(WS0sh); Serial.print(", x0s = "); Serial.print(WS0s); Serial.println("");
+            Serial.print(    "   Sample and Hold: x0S = "); Serial.print(WS0numS); Serial.println("");  //Serial.print(    "   Sample and Hold: x0h = "); Serial.print(WS0h); Serial.print(", x0s = "); Serial.print(WS0numS); Serial.println("");
           }
         }
         else if (UserChars[1] == '1')    // if recieved 1 - Wave Shape 1 variables:
@@ -1171,48 +1208,38 @@ void loop()
             Serial.print("   Wave Shape 1 B - Triangle vertical shift changed to: ");
             Serial.println(UserInput);
           }
-          else if (UserChars[2] == 'h') // if received x1h - Sample and Hold toggle
-          {
-            if ((UserInput == 1) || (UserInput == 0))
-            {
-              WS1sh = UserInput;
-              Serial.print("   Sample and Hold toggle on/off changed to: ");
-              Serial.println(UserInput);  
-            }
-            else Serial.println("   Not valid input for x1h. Must enter either 1 or 0 only (e.g. 1x1h).\n"); 
-          }
+//          else if (UserChars[2] == 'h') // if received x1h - Sample and Hold toggle
+//          {
+//            if ((UserInput == 1) || (UserInput == 0))
+//            {
+//              WS1h = UserInput;
+//              Serial.print("   Sample and Hold toggle on/off changed to: ");
+//              Serial.println(UserInput);  
+//            }
+//            else Serial.println("   Not valid input for x1h. Must enter either 1 or 0 only (e.g. 1x1h).\n"); 
+//          }
           else if (UserChars[2] == 's') // if received x1s - Sample and Hold fraction
           {
-              if ((UserInput >= 0.05) && (UserInput < 0.5))
-              {
-                WS1s = UserInput;
-                Serial.print("   Sample and Hold fraction changed to: ");
-                Serial.println(UserInput);
-              }
-              else Serial.println("   Not valid input for x1s. Must enter value between 0.05 and less than 0.5 only (e.g. 0.2x1s).\n");  
+//             if (UserInput >= 2) // if ((UserInput >= 0.05) && (UserInput < 0.5))
+//             {
+                WS1numS = ceil(abs(UserInput));
+                Serial.print("   Number of steps changed to: "); // Serial.print("   Sample and Hold fraction changed to: ");
+                Serial.println(ceil(abs(UserInput)));
+//             }
+//             else if (UserInput != 0) Serial.println("   Not valid input for x1s. Must enter value between 0.05 and less than 0.5 only (e.g. 0.2x1s).\n");  
           }  
-          else if (UserChars[2] == 'r')   //if recieved x1r
-          {
-            //randomise all variables
-            // random number set for each variable acceptable range  //NEEDS TWEAKING
-            WS1a = random(-300,301)/100.0; // This is fixed from -3 to 3
-            WS1b = random(-100,101)/100.0; // This is fixed from -1 to 1
-            Serial.println("   Wave Shape 1 - Triangle Wave all equation parameters randomised."); 
-            Serial.println("   Note this may result in wave off scale hi/low (i.e. flat line). Tweak variables or re-randomise.");        
-          }            
           else // if received x1 with no more char's after it - Wave Shape 1 variables:
           {
             Serial.println("\n   Wave Shape 1 - Triangle Wave variables.");
             Serial.println(  "             y = A/2+B-A*x\n"); // y = Ax+B\n");
             Serial.println(  "   x1a = A - Slope (default = 1.0)");
             Serial.println(  "   x1b = B - Fractional Vertical Shift value usually between 0.0 to 1.0 (default = 0.5)");
-            Serial.println(  "   x1r     - To randomise all equation variables (i.e x1a and x1b).");
-            Serial.println(  "   x1h     - Toggle Sample and Hold on/off (default = 0)");
-            Serial.println(  "   x1s     - Sample and Hold fractional length (default = 0.1, range 0.05 to less than 0.5)");
+            //Serial.println(  "   x1h     - Toggle Sample and Hold on/off (default = 0)");
+            Serial.println(  "   x1s     - Sample and Hold number of steps (default = 0 which is Sample and Hold is off)");
             Serial.println(  "   Hint: Try A = -1 to invert triangle. Also try A = 2 and B = 0.75 for trapezoid wave.\n");
             Serial.println(  "             Current values: ");
             Serial.print(    "   A = "); Serial.print(WS1a); Serial.print(", B = "); Serial.println(WS1b);
-            Serial.print(    "   Sample and Hold: x1h = "); Serial.print(WS1sh); Serial.print(", x1s = "); Serial.print(WS1s); Serial.println("");
+            Serial.print(    "   Sample and Hold: x1s = "); Serial.print(WS1numS); Serial.println(""); //Serial.print(    "   Sample and Hold: x1h = "); Serial.print(WS1h); Serial.print(", x1s = "); Serial.print(WS1numS); Serial.println("");
           }
         }
         else if (UserChars[1] == '3')    // if recieved 3 - Wave Shape 3 variables:
@@ -1323,17 +1350,17 @@ void loop()
             {
               //randomise all a values
               // random number from 0 to 100 divided by 100 for random value between 0.0 and 1.0
-              WS3a0 = random(101)/100.0;
-              WS3a1 = random(101)/100.0;
-              WS3a2 = random(101)/100.0;
-              WS3a3 = random(101)/100.0;
-              WS3a4 = random(101)/100.0;
-              WS3a5 = random(101)/100.0;
-              WS3a6 = random(101)/100.0;
-              WS3a7 = random(101)/100.0;
-              WS3a8 = random(101)/100.0;
-              WS3a9 = random(101)/100.0;
-              Serial.print("   Wave Shape 3 - Staircase Wave all a values randomised.");          
+              WS3a0 = random(100.1)/100.0;
+              WS3a1 = random(100.1)/100.0;
+              WS3a2 = random(100.1)/100.0;
+              WS3a3 = random(100.1)/100.0;
+              WS3a4 = random(100.1)/100.0;
+              WS3a5 = random(100.1)/100.0;
+              WS3a6 = random(100.1)/100.0;
+              WS3a7 = random(100.1)/100.0;
+              WS3a8 = random(100.1)/100.0;
+              WS3a9 = random(100.1)/100.0;
+              Serial.println("   Wave Shape 3 - Staircase Wave all a values randomised.");          
             }
             else Serial.println("   Not valid input - No number after 'a' detected.\n");
           }
@@ -1503,11 +1530,9 @@ void loop()
             Serial.println(  "   Values for x range must be increasing from left to right (see default values for example).");
             Serial.println(  "          y = a0, a1, a2, a3, a4, a5, a6, a7, a8, a9");
             Serial.println(  "          x range = b0, b1, b2, b3, b4, b5, b6, b7, b8\n");
-            Serial.println(  "          x3a0, x3a1, x3a2, x3a3, x3a4, x3a5, x3a6, x3a7, x3a8, x3a9 (default values = 0.000, 0.111, 0.222, 0.333, 0.444, 0.555, 0.666, 0.777, 0.888, 1.000)");
+            Serial.println(  "          x3a0, x3a1, x3a2, x3a3, x3a4, x3a5, x3a6, x3a7, x3a8, x3a9 (default values = 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)");
             Serial.println(  "          x3b0, x3b1, x3b2, x3b3, x3b4, x3b5, x3b6, x3b7, x3b8 (default values = 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9. x3b9 is not used.)");
-            Serial.println(  "   Maximum 10 segments. To turn off a segment set b to 0 (e.g. use command 0x3b0)");
-            Serial.println(  "   To randomise all a variables (i.e a0 to a9) enter command x3ar.");
-            Serial.println(  "   To randomise all b variables (i.e b0 to b8) enter command x3br.\n");          
+            Serial.println(  "   Maximum 10 segments. To turn off a segment set b to 0 (e.g. use command 0x3b0)\n");         
             Serial.println(  "          Current values: ");
             Serial.print(  "   y: a0 = "); Serial.print(WS3a0); Serial.print(", a1 = "); Serial.print(WS3a1); Serial.print(", a2 = "); Serial.print(WS3a2); Serial.print(", a3 = "); Serial.print(WS3a3); Serial.print(", a4 = "); Serial.print(WS3a4); Serial.print(", a5 = "); Serial.print(WS3a5); Serial.print(", a6 = "); Serial.print(WS3a6); Serial.print(", a7 = "); Serial.print(WS3a7); Serial.print(", a8 = "); Serial.print(WS3a8); Serial.print(", a9 = "); Serial.print(WS3a9); Serial.println("");
             Serial.print(  "   x: b0 = "); Serial.print(WS3b0); Serial.print(", b1 = "); Serial.print(WS3b1); Serial.print(", b2 = "); Serial.print(WS3b2); Serial.print(", b3 = "); Serial.print(WS3b3); Serial.print(", b4 = "); Serial.print(WS3b4); Serial.print(", b5 = "); Serial.print(WS3b5); Serial.print(", b6 = "); Serial.print(WS3b6); Serial.print(", b7 = "); Serial.print(WS3b7); Serial.print(", b8 = "); Serial.print(WS3b8); Serial.println("");
@@ -1517,92 +1542,111 @@ void loop()
         {
           if (UserChars[2] == 'a') // if recieved x4a
           {
-            WS4a = UserInput;
-            Serial.print("   Wave Shape 4 - Half Square Root function A changed to: ");
-            Serial.println(UserInput);
+            if (UserChars[3] == 'u') // if recieved x4au
+            {
+              WS4au = UserInput;
+              Serial.print("   Wave Shape 4 - Half Square Root function Au changed to: ");
+              Serial.println(UserInput);              
+            }
+            if (UserChars[3] == 'd') // if recieved x4ad
+            {
+              WS4ad = UserInput;
+              Serial.print("   Wave Shape 4 - Half Square Root function Ad changed to: ");
+              Serial.println(UserInput);              
+            }            
+
           }
           else if (UserChars[2] == 'b')    // if recieved x4b
           {
-            WS4b = UserInput;
-            Serial.print("   Wave Shape 4 - Half Square Root function B changed to: ");
-            Serial.println(UserInput);
+            if (UserChars[3] == 'u') // if recieved x4bu
+            {
+              WS4bu = UserInput;
+              Serial.print("   Wave Shape 4 - Half Square Root function Bu changed to: ");
+              Serial.println(UserInput);              
+            }
+            if (UserChars[3] == 'd') // if recieved x4bd
+            {
+              WS4bd = UserInput;
+              Serial.print("   Wave Shape 4 - Half Square Root function Bd changed to: ");
+              Serial.println(UserInput);              
+            }            
           }
           else if (UserChars[2] == 'c')    // if recieved x4c
           {
-            WS4c = UserInput;
-            Serial.print("   Wave Shape 4 - Half Square Root function C Vertical Shift changed to: ");
-            Serial.println(UserInput);
-          }
-          else if (UserChars[2] == 'u')    //if recieved x4u
-          {
-            if ((UserInput == 1) || (UserInput == 0))
+            if (UserChars[3] == 'u') // if recieved x4cu
             {
-              WS4up = UserInput;
-              Serial.print("   Wave Shape 4 - Half Square Root function Up changed to: ");
-              Serial.println(UserInput);
+              WS4cu = UserInput;
+              Serial.print("   Wave Shape 4 - Half Square Root function Cu Vertical Shift changed to: ");
+              Serial.println(UserInput);              
             }
-            else Serial.println("   Not valid input for x4u. Must enter either 1 or 0 only (e.g. 1x4u).\n");
-          }
-          else if (UserChars[2] == 'd')    //if recieved x4d
-          {
-            if ((UserInput == 1) || (UserInput == 0))
+            if (UserChars[3] == 'd') // if recieved x4cd
             {
-              WS4dn = UserInput;
-              Serial.print("   Wave Shape 4 - Half Square Root function Down changed to: ");
-              Serial.println(UserInput);
+              WS4cd = UserInput;
+              Serial.print("   Wave Shape 4 - Half Square Root function Cd Vertical Shift changed to: ");
+              Serial.println(UserInput);              
             }
-            else Serial.println("   Not valid input for x4d. Must enter either 1 or 0 only (e.g. 0x4d).\n");
           }
-          else if (UserChars[2] == 'h') // if received x4h - Sample and Hold toggle
-          {
-              if ((UserInput == 1) || (UserInput == 0))
-              {
-                WS4sh = UserInput;
-                Serial.print("   Sample and Hold toggle on/off changed to: ");
-                Serial.println(UserInput);   
-              }
-              else Serial.println("   Not valid input for x4h. Must enter either 1 or 0 only (e.g. 1x4h).\n");
-          }
+//          else if (UserChars[2] == 'u')    //if recieved x4u
+//          {
+//            if ((UserInput == 1) || (UserInput == 0))
+//            {
+//              WS4up = UserInput;
+//              Serial.print("   Wave Shape 4 - Half Square Root function Up changed to: ");
+//              Serial.println(UserInput);
+//            }
+//            else Serial.println("   Not valid input for x4u. Must enter either 1 or 0 only (e.g. 1x4u).\n");
+//          }
+//          else if (UserChars[2] == 'd')    //if recieved x4d
+//          {
+//            if ((UserInput == 1) || (UserInput == 0))
+//            {
+//              WS4dn = UserInput;
+//              Serial.print("   Wave Shape 4 - Half Square Root function Down changed to: ");
+//              Serial.println(UserInput);
+//            }
+//            else Serial.println("   Not valid input for x4d. Must enter either 1 or 0 only (e.g. 0x4d).\n");
+//          }
+//          else if (UserChars[2] == 'h') // if received x4h - Sample and Hold toggle
+//          {
+//            if ((UserInput == 1) || (UserInput == 0))
+//            {
+//              WS4h = UserInput;
+//              Serial.print("   Sample and Hold toggle on/off changed to: ");
+//              Serial.println(UserInput);   
+//            }
+//            else Serial.println("   Not valid input for x4h. Must enter either 1 or 0 only (e.g. 1x4h).\n");
+//          }
           else if (UserChars[2] == 's') // if received x4s - Sample and Hold fraction
           {
-              if ((UserInput >= 0.05) && (UserInput < 0.5))
-              {
-                WS4s = UserInput;
-                Serial.print("   Sample and Hold fraction changed to: ");
-                Serial.println(UserInput);
-              }
-              else Serial.println("   Not valid input for x4s. Must enter value between 0.05 and less than 0.5 only (e.g. 0.2x4s).\n");
-          }
-          else if (UserChars[2] == 'r')   //if recieved x4r
-          {
-            //randomise all variables
-            // random number set for each variable acceptable range  //NEEDS TWEAKING
-            WS4a = random(100,1000)/10.0;  // This is fixed from 10 to 100
-            WS4b = random(-5000,5001)/100.0; // This is fixed from -50 to 50
-            WS4c = random(-200,201)/100.0; // This is fixed from -2 to 2
-            WS4up = random(0,2); // This is fixed either 0 or 1
-            if (WS4up == 0) WS4dn = 1; // both WS4up and WS4dn cannot be 0
-            else WS4dn = random(0,2); // This is fixed either 0 or 1
-            Serial.println("   Wave Shape 4 - Half Square Root Wave all equation parameters randomised."); 
-            Serial.println("   Note this may result in wave off scale hi/low (i.e. flat line). Tweak variables or re-randomise.");        
-          }        
+//             if (UserInput >= 2) // if ((UserInput >= 0.05) && (UserInput < 0.5))
+//             {
+                WS4numS = ceil(abs(UserInput));
+                Serial.print("   Number of steps changed to: "); // Serial.print("   Sample and Hold fraction changed to: ");
+                Serial.println(ceil(abs(UserInput)));
+//             }
+//             else if (UserInput != 0) Serial.println("   Not valid input for x4s. Must enter value between 0.05 and less than 0.5 only (e.g. 0.2x4s).\n");
+          }         
           else  // if recieved x4 with no more char's after it - Wave Shape 4 variables:
           {
             Serial.println("\n   Wave Shape 4 - Half Square Root function wave variables.");
-            Serial.println(  "          Upper portion: y = A(x + B)^0.5 + C");
-            Serial.println(  "          Lower portion: y = -(A(x + B)^0.5 + C)\n");
-            Serial.println(  "   x4a = A (default = 50.0)");
-            Serial.println(  "   x4b = B (default = 0.0)");
-            Serial.println(  "   x4c = C Vertical Shift (default = 0.0)");
-            Serial.println(  "   x4u = Upper portion of the function (default = 1). Value must be 1 or 0 only (boolean).");
-            Serial.println(  "   x4d = Lower portion of the function (default = 1). Value must be 1 or 0 only (boolean).");
-            Serial.println(  "   x4r     - To randomise all equation variables (i.e x4a to x4c including x4u and x4d).");            
-            Serial.println(  "   x4h     - Toggle Sample and Hold on/off (default = 0)");
-            Serial.println(  "   x4s     - Sample and Hold fractional length (default = 0.1, range 0.05 to less than 0.5)");
-            Serial.println(  "   Hint: Try A = -50 and C = 0.5 and change values of x4u and x4d.\n");
+            Serial.println(  "          First Half: y = Au(x + Bu)^0.5 + Cu");
+            Serial.println(  "          Second Half: y = -(Ad(x + Bd)^0.5) + Cd\n");
+            Serial.println(  "   x4au = Au (default = 50.0)");
+            Serial.println(  "   x4bu = Bu (default = 0.0)");
+            Serial.println(  "   x4cu = Cu (default = 0.0)");
+            Serial.println(  "   x4ad = Ad (default = 50.0)");
+            Serial.println(  "   x4bd = Bd (default = 0.0)");
+            Serial.println(  "   x4cd = Cd (default = 1.0)");
+            //Serial.println(  "   x4u = Upper portion of the function (default = 1). Value must be 1 or 0 only (boolean).");
+            //Serial.println(  "   x4d = Lower portion of the function (default = 1). Value must be 1 or 0 only (boolean).");
+            //Serial.println(  "   x4h     - Toggle Sample and Hold on/off (default = 0)");
+            Serial.println(  "   x4s     - Sample and Hold number of steps (default = 0 which is Sample and Hold is off)");
+            Serial.println(  "   Hint 1: Try Au = -50, Bu = 0, Cu = 1.0, Ad = 50, Bd = 1000, Cd = 1.");
+            Serial.println(  "   Hint 2: Try Au = 0 or Ad = 0 but not both 0.\n");
             Serial.println(  "   Current values: ");
-            Serial.print(  "   A = "); Serial.print(WS4a); Serial.print(", B = "); Serial.print(WS4b); Serial.print(", C = "); Serial.print(WS4c); Serial.print(", Up = "); Serial.print(WS4up); Serial.print(", Down = "); Serial.println(WS4dn);
-            Serial.print(  "   Sample and Hold: x4h = "); Serial.print(WS4sh); Serial.print(", x4s = "); Serial.print(WS4s); Serial.println("");
+            Serial.print(  "   Au = "); Serial.print(WS4au); Serial.print(", Bu = "); Serial.print(WS4bu); Serial.print(", Cu = "); Serial.print(WS4cu); Serial.println(""); //Serial.print(", Up = "); Serial.print(WS4up); Serial.print(", Down = "); Serial.println(WS4dn);
+            Serial.print(  "   Ad = "); Serial.print(WS4ad); Serial.print(", Bd = "); Serial.print(WS4bd); Serial.print(", Cd = "); Serial.print(WS4cd); Serial.println(""); //Serial.print(", Up = "); Serial.print(WS4up); Serial.print(", Down = "); Serial.println(WS4dn);
+            Serial.print(  "   Sample and Hold: x4s = "); Serial.print(WS4numS); Serial.println(""); Serial.println(""); //Serial.print(  "   Sample and Hold: x4h = "); Serial.print(WS4h); Serial.print(", x4s = "); Serial.print(WS4numS); Serial.println("");
           }
         }
         else if (UserChars[1] == '5')   // if recieved 5 - Wave Shape 5 variables:
@@ -1625,50 +1669,39 @@ void loop()
             Serial.print("   Wave Shape 5 - Full Square Root function C Vertical Shift changed to: ");
             Serial.println(UserInput);
           }
-          else if (UserChars[2] == 'h') // if received x5h - Sample and Hold toggle
-          {
-            if ((UserInput == 1) || (UserInput == 0))
-            {
-              WS5sh = UserInput;
-              Serial.print("   Sample and Hold toggle on/off changed to: ");
-              Serial.println(UserInput);      
-            }
-            else Serial.println("   Not valid input for x5h. Must enter either 1 or 0 only (e.g. 1x5h).\n");
-          }
+//          else if (UserChars[2] == 'h') // if received x5h - Sample and Hold toggle
+//          {
+//            if ((UserInput == 1) || (UserInput == 0))
+//            {
+//              WS5h = UserInput;
+//              Serial.print("   Sample and Hold toggle on/off changed to: ");
+//              Serial.println(UserInput);      
+//            }
+//            else Serial.println("   Not valid input for x5h. Must enter either 1 or 0 only (e.g. 1x5h).\n");
+//          }
           else if (UserChars[2] == 's') // if received x5s - Sample and Hold fraction
           {
-              if ((UserInput >= 0.05) && (UserInput < 0.5))
-              {
-                WS5s = UserInput;
-                Serial.print("   Sample and Hold fraction changed to: ");
-                Serial.println(UserInput);                
-              }
-              else Serial.println("   Not valid input for x5s. Must enter value between 0.05 and less than 0.5 only (e.g. 0.2x5s).\n");
+//             if (UserInput >= 2) // if ((UserInput >= 0.05) && (UserInput < 0.5))
+//             {
+                WS5numS = ceil(abs(UserInput));
+                Serial.print("   Number of steps changed to: "); // Serial.print("   Sample and Hold fraction changed to: ");
+                Serial.println(ceil(abs(UserInput)));
+//             }
+//             else if (UserInput != 0) Serial.println("   Not valid input for x5s. Must enter value between 0.05 and less than 0.5 only (e.g. 0.2x5s).\n");
           }           
-          else if (UserChars[2] == 'r')   //if recieved x5r
-          {
-            //randomise all variables
-            // random number set for each variable acceptable range  //NEEDS TWEAKING
-            WS5a = random(100,1000)/10.0;  // This is fixed from 10 to 100
-            WS5b = random(-5000,5001)/100.0; // This is fixed from -50 to 50
-            WS5c = random(-200,201)/100.0; // This is fixed from -2 to 2
-            Serial.println("   Wave Shape 5 - Full Square Root Wave all equation parameters randomised."); 
-            Serial.println("   Note this may result in wave off scale hi/low (i.e. flat line). Tweak variables or re-randomise.");        
-          }      
           else  // if revieved x5 with no more char's after it - Wave Shape 5 variables:
           {
             Serial.println("\n   Wave Shape 5 - Full Square Root function wave variables.");
             Serial.println(  "          y = A(x + B)^0.5 + C\n");
             Serial.println(  "   x5a = A (default = 50.0)");
             Serial.println(  "   x5b = B (default = 0.0)");
-            Serial.println(  "   x5c = C Vertical Shift (default = 0.0)");
-            Serial.println(  "   x5r     - To randomise all equation variables (i.e x5a to x5c)."); 
-            Serial.println(  "   x5h     - Toggle Sample and Hold on/off (default = 0)");
-            Serial.println(  "   x5s     - Sample and Hold fractional length (default = 0.1, range 0.05 to less than 0.5)");
+            Serial.println(  "   x5c = C (default = 0.0)");
+            //Serial.println(  "   x5h     - Toggle Sample and Hold on/off (default = 0)");
+            Serial.println(  "   x5s     - Sample and Hold number of steps (default = 0 which is Sample and Hold is off)");
             Serial.println(  "   Hint: Try A = -50, C = 1.\n");
             Serial.println(  "   Current values: ");
             Serial.print(  "   A = "); Serial.print(WS5a); Serial.print(", B = "); Serial.print(WS5b); Serial.print(", C = "); Serial.println(WS5c);
-            Serial.print(  "   Sample and Hold: x5h = "); Serial.print(WS5sh); Serial.print(", x5s = "); Serial.print(WS5s); Serial.println("");
+            Serial.print(  "   Sample and Hold: x5s = "); Serial.print(WS5numS); Serial.println(""); //Serial.print(  "   Sample and Hold: x5h = "); Serial.print(WS5h); Serial.print(", x5s = "); Serial.print(WS5numS); Serial.println("");
           }
         }
         else // if received x followed by line feed or x plus any other invalid or unused characters
@@ -3045,7 +3078,7 @@ void TC0_Handler() // write analogue & synchronized square wave to DAC & pin 3 -
     else if (!ExactFreqMode) WaveBit = 1; // if not in exact freq mode reset to 1, allowing next update to be lower at 0 (necessary for very low duty cycle)
     if (MinOrMaxWaveDuty) // if duty set to 0 or 100
     {
-      if (!WaveHalf) DACC->DACC_CDR = WaveFull[WaveBit / 1048576]; // if displaying 2nd wave half only (just passed end), write to DAC (1048576 = 4294967296 / 4096)
+      if (!WaveHalf) DACC->DACC_CDR = WaveFull2[WaveBit / 1048576]; // if displaying 2nd wave half only (just passed end), write to DAC (1048576 = 4294967296 / 4096)
       else           DACC->DACC_CDR = WaveFull[(4294967295 - WaveBit) / 1048576]; // if displaying 1st wave half only (just passed end), write to DAC
       if (SquareWaveSync)
       {
@@ -3068,7 +3101,7 @@ void TC0_Handler() // write analogue & synchronized square wave to DAC & pin 3 -
     {
       if (WaveHalf)
       {
-        DACC->DACC_CDR = WaveFull[WaveBit / 1048576]; // if 2nd wave half (just passed end of 1st half), write to DAC
+        DACC->DACC_CDR = WaveFull2[WaveBit / 1048576]; // if 2nd wave half (just passed end of 1st half), write to DAC
         if (SquareWaveSync)
         {
           TC2->TC_CHANNEL[1].TC_CMR = TC_CMR_WAVE | TC_CMR_ASWTRG_CLEAR; // set TIOA (sq. wave on pin 3) LOW when triggered (on next line)
@@ -3089,7 +3122,7 @@ void TC0_Handler() // write analogue & synchronized square wave to DAC & pin 3 -
   }
   else // if not end of wave half
   {
-    if (!WaveHalf) DACC->DACC_CDR = WaveFull[WaveBit / 1048576]; // if 2nd wave half, write to DAC
+    if (!WaveHalf) DACC->DACC_CDR = WaveFull2[WaveBit / 1048576]; // if 2nd wave half, write to DAC
     else          DACC->DACC_CDR = WaveFull[(4294967295 - WaveBit) / 1048576]; // if 1st wave half, write to DAC
   }
 }
